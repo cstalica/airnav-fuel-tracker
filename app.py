@@ -34,18 +34,32 @@ def parse_fbo_fuel_table(fuel_table):
     except ValueError:
         return None, "N/A"
 
-    price = None
+    fs_price = None
+    ss_price = None
+
     for tr in fuel_table.find_all("tr"):
         cells = [
             td.get_text(strip=True)
             for td in tr.find_all(["td", "th"])
             if td.get_text(strip=True)
         ]
-        if cells and cells[0] == "FS":
-            price_cells = cells[1:]
-            if jeta_col_idx < len(price_cells):
-                price = price_cells[jeta_col_idx]
-                break
+        if not cells:
+            continue
+
+        service_type = cells[0].upper()
+        price_cells = cells[1:]
+
+        if service_type == "FS" and jeta_col_idx < len(price_cells):
+            val = price_cells[jeta_col_idx]
+            if val and val != "N/A":
+                fs_price = val
+        elif service_type == "SS" and jeta_col_idx < len(price_cells):
+            val = price_cells[jeta_col_idx]
+            if val and val != "N/A":
+                ss_price = val
+
+    # Prioritize FS price; fall back to SS price if FS is unavailable
+    price = fs_price if fs_price else ss_price
 
     table_text = fuel_table.get_text()
     date_match = re.search(
@@ -66,7 +80,6 @@ def parse_fbo_fuel_table(fuel_table):
 def get_fbo_name(fbo_container):
     if not fbo_container:
         return "Unknown FBO"
-
     tds = fbo_container.find_all("td", recursive=False) or fbo_container.find_all(
         "td"
     )
@@ -78,70 +91,65 @@ def get_fbo_name(fbo_container):
     def clean_name(raw_text):
         if not raw_text:
             return ""
-        # Strip common prefixes/suffixes & phone numbers
         cleaned = re.sub(
             r"^(More info and photos of|More info|Photos of|Photos)\s*",
             "",
             raw_text,
             flags=re.IGNORECASE,
         ).strip()
-        cleaned = re.sub(r"\d{3}[-\s]?\d{3}[-\s]?\d{4}.*", "", cleaned).strip()
-        return cleaned
+        return re.sub(r"\d{3}[-\s]?\d{3}[-\s]?\d{4}.*", "", cleaned).strip()
 
-    def is_valid_fbo(name):
-        if not name or len(name) <= 2:
-            return False
-        # Filter out utility links, navigation keywords, and brand icons
-        ignore_keywords = [
-            "more info",
-            "website",
-            "email",
-            "guaranteed",
-            "read",
-            "write",
-            "photos",
-            "photo",
-            "review",
-            "reviews",
-            "map",
-            "directions",
-            "phillips",
-            "independent",
-            "nata",
-            "customs",
-            "wifi",
-            "hertz",
-            "go rentals",
-            "enterprise",
-            "air elite",
-            "caa",
-            "world fuel",
-            "multi service",
-            "asri",
-            "tel:",
-            "fax:",
-        ]
-        return not any(kw in name.lower() for kw in ignore_keywords)
-
-    # 1. Check all anchor (<a>) and bold (<b>/<strong>) tags together
-    # This covers both <a href="...">FBO Name</a> and <a><b>FBO Name</b></a>
-    for tag in first_td.find_all(["a", "b", "strong"]):
-        text = tag.get_text(strip=True)
-        # Handle cases where <a> contains an <img> with alt text instead of direct text
-        if not text and tag.name == "a" and tag.find("img"):
-            text = tag.find("img").get("alt", "") or tag.find("img").get("title", "")
-
-        cleaned = clean_name(text)
-        if is_valid_fbo(cleaned):
-            return cleaned
-
-    # 2. Check standalone images with alt/title text
     for img in first_td.find_all("img"):
         cleaned = clean_name(img.get("alt", "") or img.get("title", ""))
-        if is_valid_fbo(cleaned):
+        if cleaned and len(cleaned) > 2:
+            if not any(
+                kw in cleaned.lower()
+                for kw in [
+                    "phillips",
+                    "independent",
+                    "nata",
+                    "customs",
+                    "wifi",
+                    "hertz",
+                    "go rentals",
+                    "enterprise",
+                    "air elite",
+                    "caa",
+                    "world fuel",
+                    "multi service",
+                    "guaranteed",
+                ]
+            ):
+                return cleaned
+
+    for b_tag in first_td.find_all(["b", "strong"]):
+        cleaned = clean_name(b_tag.get_text(strip=True))
+        if cleaned and len(cleaned) > 2:
             return cleaned
 
-    # 3. Fallback: Parse line-by-line raw text content inside the table cell
+    for a_tag in first_td.find_all("a"):
+        text = a_tag.get_text(strip=True) or (
+            a_tag.find("img").get("alt", "") if a_tag.find("img") else ""
+        )
+        cleaned = clean_name(text)
+        if (
+            cleaned
+            and len(cleaned) > 2
+            and not any(
+                kw in cleaned.lower()
+                for kw in [
+                    "more info",
+                    "website",
+                    "email",
+                    "guaranteed",
+                    "read",
+                    "write",
+                    "photos",
+                ]
+            )
+        ):
+            return cleaned
+
     lines = [
         line.strip()
         for line in first_td.get_text(separator="\n").split("\n")
@@ -149,7 +157,25 @@ def get_fbo_name(fbo_container):
     ]
     for line in lines:
         cleaned = clean_name(line)
-        if is_valid_fbo(cleaned):
+        if (
+            cleaned
+            and len(cleaned) > 2
+            and not any(
+                kw in cleaned.lower()
+                for kw in [
+                    "more info",
+                    "website",
+                    "email",
+                    "guaranteed",
+                    "read",
+                    "write",
+                    "photos",
+                    "asri",
+                    "tel:",
+                    "fax:",
+                ]
+            )
+        ):
             return cleaned
 
     return "Unknown FBO"
@@ -202,7 +228,8 @@ def scrape_airport_jeta(icao):
             ]
         ):
             continue
-        if "Jet A" in table_text and "FS" in table_text:
+# Change "FS" in table_text to allow either "FS" or "SS"
+        if "Jet A" in table_text and any(x in table_text for x in ["FS", "SS"]):
             fbo_container = table.find_parent("tr")
             if fbo_container and "located at" in fbo_container.get_text().lower():
                 continue
@@ -213,7 +240,7 @@ def scrape_airport_jeta(icao):
                     {
                         "Airport": icao,
                         "FBO Name": fbo_name,
-                        "Jet A (FS)": price,
+                        "Jet A Price": price,
                         "Price Updated": updated_date,
                     }
                 )
