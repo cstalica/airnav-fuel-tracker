@@ -36,6 +36,7 @@ def parse_fbo_fuel_table(fuel_table):
 
     fs_price = None
     ss_price = None
+    as_price = None
 
     for tr in fuel_table.find_all("tr"):
         cells = [
@@ -57,9 +58,13 @@ def parse_fbo_fuel_table(fuel_table):
             val = price_cells[jeta_col_idx]
             if val and val != "N/A":
                 ss_price = val
+        elif service_type == "AS" and jeta_col_idx < len(price_cells):
+            val = price_cells[jeta_col_idx]
+            if val and val != "N/A":
+                as_price = val
 
-    # Prioritize FS price; fall back to SS price if FS is unavailable
-    price = fs_price if fs_price else ss_price
+    # Priority order: FS -> SS -> AS
+    price = fs_price or ss_price or as_price
 
     table_text = fuel_table.get_text()
     date_match = re.search(
@@ -233,7 +238,7 @@ def scrape_airport_jeta(icao):
             ]
         ):
             continue
-        if "Jet A" in table_text and any(x in table_text for x in ["FS", "SS"]):
+        if "Jet A" in table_text and any(x in table_text for x in ["FS", "SS", "AS"]):
             fbo_container = table.find_parent("tr")
             if fbo_container and "located at" in fbo_container.get_text().lower():
                 continue
@@ -256,7 +261,7 @@ def scrape_airport_jeta(icao):
 st.title("✈️ Jet A Fuel Tracker")
 st.write("Search Jet A fuel prices on AirNav.")
 
-airport_input = st.text_input("Airport Codes Separated by Commas (ICT, FTY):", "")
+airport_input = st.text_input("Airport Codes Separated by Commas (ICT, FTY, KIXA):", "")
 
 if st.button("Fetch Prices", type="primary", use_container_width=True):
     airports = [
