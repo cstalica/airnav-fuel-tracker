@@ -86,6 +86,10 @@ def get_fbo_name(fbo_container):
     if not fbo_container:
         return "Unknown FBO", None
 
+    # Focus specifically on the first TD cell (Business Name column)
+    tds = fbo_container.find_all("td", recursive=False) or fbo_container.find_all("td")
+    target_elem = tds[0] if tds else fbo_container
+
     def clean_name(raw_text):
         if not raw_text:
             return ""
@@ -117,10 +121,12 @@ def get_fbo_name(fbo_container):
         "nata",
         "airboss",
         "reserve",
+        "multi service",
+        "click here",
     ]
 
-    # 1. Prioritize <a> hyperlink tags with href containing '/fbo/'
-    fbo_links = fbo_container.find_all("a", href=re.compile(r"/fbo/", re.IGNORECASE))
+    # 1. Check for <a> hyperlink tags containing '/fbo/'
+    fbo_links = target_elem.find_all("a", href=re.compile(r"/fbo/", re.IGNORECASE))
     for a_tag in fbo_links:
         text = a_tag.get_text(strip=True) or (
             a_tag.find("img").get("alt", "") if a_tag.find("img") else ""
@@ -135,8 +141,8 @@ def get_fbo_name(fbo_container):
             full_url = f"https://www.airnav.com{href}" if href.startswith("/") else href
             return cleaned, full_url
 
-    # 2. Check any other <a> tags inside fbo_container
-    for a_tag in fbo_container.find_all("a"):
+    # 2. Check for any other <a> tags in the business name cell
+    for a_tag in target_elem.find_all("a"):
         text = a_tag.get_text(strip=True) or (
             a_tag.find("img").get("alt", "") if a_tag.find("img") else ""
         )
@@ -150,21 +156,8 @@ def get_fbo_name(fbo_container):
             full_url = f"https://www.airnav.com{href}" if href.startswith("/") else href
             return cleaned, full_url
 
-    # 3. Fallback: Check <img> tags
-    for img in fbo_container.find_all("img"):
-        cleaned = clean_name(img.get("alt", "") or img.get("title", ""))
-        if (
-            cleaned
-            and len(cleaned) > 2
-            and not any(
-                kw in cleaned.lower()
-                for kw in ignore_keywords + ["phillips", "independent", "world fuel", "multi service"]
-            )
-        ):
-            return cleaned, None
-
-    # 4. Fallback: Check <b> or <strong> tags
-    for b_tag in fbo_container.find_all(["b", "strong"]):
+    # 3. Check for <b> or <strong> tags
+    for b_tag in target_elem.find_all(["b", "strong"]):
         cleaned = clean_name(b_tag.get_text(strip=True))
         if (
             cleaned
@@ -173,10 +166,23 @@ def get_fbo_name(fbo_container):
         ):
             return cleaned, None
 
-    # 5. Fallback: Plain text line scanning
+    # 4. Check for <img> tags
+    for img in target_elem.find_all("img"):
+        cleaned = clean_name(img.get("alt", "") or img.get("title", ""))
+        if (
+            cleaned
+            and len(cleaned) > 2
+            and not any(
+                kw in cleaned.lower()
+                for kw in ignore_keywords + ["phillips", "independent", "world fuel"]
+            )
+        ):
+            return cleaned, None
+
+    # 5. Extract plain text line-by-line when business name is plain text
     lines = [
         line.strip()
-        for line in fbo_container.get_text(separator="\n").split("\n")
+        for line in target_elem.get_text(separator="\n").split("\n")
         if line.strip()
     ]
     for line in lines:
