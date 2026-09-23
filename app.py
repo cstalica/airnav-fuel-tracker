@@ -79,55 +79,44 @@ def parse_fbo_fuel_table(fuel_table):
 
 def get_fbo_name(fbo_container):
     if not fbo_container:
-        return "Unknown FBO"
-    tds = fbo_container.find_all("td", recursive=False) or fbo_container.find_all(
-        "td"
-    )
-    if not tds:
-        return "Unknown FBO"
-
-    first_td = tds[0]
+        return "Unknown FBO", None
 
     def clean_name(raw_text):
         if not raw_text:
             return ""
         cleaned = re.sub(
-            r"^(More info and photos of|More info|Photos of|Photos)\s*",
+            r"^(More info and photos of|More info about|More info of|More info|Photos of|Photos)\s*",
             "",
             raw_text,
             flags=re.IGNORECASE,
         ).strip()
         return re.sub(r"\d{3}[-\s]?\d{3}[-\s]?\d{4}.*", "", cleaned).strip()
 
-    for img in first_td.find_all("img"):
-        cleaned = clean_name(img.get("alt", "") or img.get("title", ""))
-        if cleaned and len(cleaned) > 2:
-            if not any(
-                kw in cleaned.lower()
-                for kw in [
-                    "phillips",
-                    "independent",
-                    "nata",
-                    "customs",
-                    "wifi",
-                    "hertz",
-                    "go rentals",
-                    "enterprise",
-                    "air elite",
-                    "caa",
-                    "world fuel",
-                    "multi service",
-                    "guaranteed",
-                ]
-            ):
-                return cleaned
+    ignore_keywords = [
+        "more info",
+        "website",
+        "web site",
+        "email",
+        "guaranteed",
+        "read",
+        "write",
+        "photos",
+        "asri",
+        "tel:",
+        "fax:",
+        "hertz",
+        "go rentals",
+        "enterprise",
+        "national",
+        "caa",
+        "nata",
+        "airboss",
+        "reserve",
+    ]
 
-    for b_tag in first_td.find_all(["b", "strong"]):
-        cleaned = clean_name(b_tag.get_text(strip=True))
-        if cleaned and len(cleaned) > 2:
-            return cleaned
-
-    for a_tag in first_td.find_all("a"):
+    # 1. Prioritize <a> hyperlink tags with href containing '/fbo/'
+    fbo_links = fbo_container.find_all("a", href=re.compile(r"/fbo/", re.IGNORECASE))
+    for a_tag in fbo_links:
         text = a_tag.get_text(strip=True) or (
             a_tag.find("img").get("alt", "") if a_tag.find("img") else ""
         )
@@ -135,24 +124,54 @@ def get_fbo_name(fbo_container):
         if (
             cleaned
             and len(cleaned) > 2
+            and not any(kw in cleaned.lower() for kw in ignore_keywords)
+        ):
+            href = a_tag.get("href", "")
+            full_url = f"https://www.airnav.com{href}" if href.startswith("/") else href
+            return cleaned, full_url
+
+    # 2. Check any other <a> tags inside fbo_container
+    for a_tag in fbo_container.find_all("a"):
+        text = a_tag.get_text(strip=True) or (
+            a_tag.find("img").get("alt", "") if a_tag.find("img") else ""
+        )
+        cleaned = clean_name(text)
+        if (
+            cleaned
+            and len(cleaned) > 2
+            and not any(kw in cleaned.lower() for kw in ignore_keywords)
+        ):
+            href = a_tag.get("href", "")
+            full_url = f"https://www.airnav.com{href}" if href.startswith("/") else href
+            return cleaned, full_url
+
+    # 3. Fallback: Check <img> tags
+    for img in fbo_container.find_all("img"):
+        cleaned = clean_name(img.get("alt", "") or img.get("title", ""))
+        if (
+            cleaned
+            and len(cleaned) > 2
             and not any(
                 kw in cleaned.lower()
-                for kw in [
-                    "more info",
-                    "website",
-                    "email",
-                    "guaranteed",
-                    "read",
-                    "write",
-                    "photos",
-                ]
+                for kw in ignore_keywords + ["phillips", "independent", "world fuel", "multi service"]
             )
         ):
-            return cleaned
+            return cleaned, None
 
+    # 4. Fallback: Check <b> or <strong> tags
+    for b_tag in fbo_container.find_all(["b", "strong"]):
+        cleaned = clean_name(b_tag.get_text(strip=True))
+        if (
+            cleaned
+            and len(cleaned) > 2
+            and not any(kw in cleaned.lower() for kw in ignore_keywords)
+        ):
+            return cleaned, None
+
+    # 5. Fallback: Plain text line scanning
     lines = [
         line.strip()
-        for line in first_td.get_text(separator="\n").split("\n")
+        for line in fbo_container.get_text(separator="\n").split("\n")
         if line.strip()
     ]
     for line in lines:
@@ -160,25 +179,11 @@ def get_fbo_name(fbo_container):
         if (
             cleaned
             and len(cleaned) > 2
-            and not any(
-                kw in cleaned.lower()
-                for kw in [
-                    "more info",
-                    "website",
-                    "email",
-                    "guaranteed",
-                    "read",
-                    "write",
-                    "photos",
-                    "asri",
-                    "tel:",
-                    "fax:",
-                ]
-            )
+            and not any(kw in cleaned.lower() for kw in ignore_keywords)
         ):
-            return cleaned
+            return cleaned, None
 
-    return "Unknown FBO"
+    return "Unknown FBO", None
 
 
 def strip_nearby_airports_section(soup):
@@ -228,18 +233,18 @@ def scrape_airport_jeta(icao):
             ]
         ):
             continue
-# Change "FS" in table_text to allow either "FS" or "SS"
         if "Jet A" in table_text and any(x in table_text for x in ["FS", "SS"]):
             fbo_container = table.find_parent("tr")
             if fbo_container and "located at" in fbo_container.get_text().lower():
                 continue
             price, updated_date = parse_fbo_fuel_table(table)
             if price:
-                fbo_name = get_fbo_name(fbo_container)
+                fbo_name, fbo_url = get_fbo_name(fbo_container)
                 fbo_results.append(
                     {
                         "Airport": icao,
                         "FBO Name": fbo_name,
+                        "FBO Link": fbo_url if fbo_url else "",
                         "Jet A Price": price,
                         "Price Updated": updated_date,
                     }
@@ -249,7 +254,7 @@ def scrape_airport_jeta(icao):
 
 # UI Layout
 st.title("✈️ Jet A Fuel Tracker")
-st.write("Search full-service Jet A fuel prices on AirNav.")
+st.write("Search Jet A fuel prices on AirNav.")
 
 airport_input = st.text_input("Airport Codes Separated by Commas (ICT, FTY):", "")
 
@@ -272,7 +277,8 @@ if st.button("Fetch Prices", type="primary", use_container_width=True):
                 {
                     "Airport": icao,
                     "FBO Name": "N/A or Error",
-                    "Jet A (FS)": "N/A",
+                    "FBO Link": "",
+                    "Jet A Price": "N/A",
                     "Price Updated": "N/A",
                 }
             )
@@ -281,7 +287,17 @@ if st.button("Fetch Prices", type="primary", use_container_width=True):
     if all_data:
         df = pd.DataFrame(all_data)
         st.subheader("Results")
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(
+            df,
+            column_config={
+                "FBO Link": st.column_config.LinkColumn(
+                    "FBO Link",
+                    display_text="View on AirNav",
+                ),
+            },
+            use_container_width=True,
+            hide_index=True,
+        )
 
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button(
