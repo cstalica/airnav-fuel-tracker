@@ -66,6 +66,7 @@ def parse_fbo_fuel_table(fuel_table):
 def get_fbo_name(fbo_container):
     if not fbo_container:
         return "Unknown FBO"
+
     tds = fbo_container.find_all("td", recursive=False) or fbo_container.find_all(
         "td"
     )
@@ -77,71 +78,70 @@ def get_fbo_name(fbo_container):
     def clean_name(raw_text):
         if not raw_text:
             return ""
+        # Strip common prefixes/suffixes & phone numbers
         cleaned = re.sub(
             r"^(More info and photos of|More info|Photos of|Photos)\s*",
             "",
             raw_text,
             flags=re.IGNORECASE,
         ).strip()
-        return re.sub(r"\d{3}[-\s]?\d{3}[-\s]?\d{4}.*", "", cleaned).strip()
+        cleaned = re.sub(r"\d{3}[-\s]?\d{3}[-\s]?\d{4}.*", "", cleaned).strip()
+        return cleaned
 
-    # 1. Check anchor (hyperlink) tags first
-    for a_tag in first_td.find_all("a"):
-        text = a_tag.get_text(strip=True) or (
-            a_tag.find("img").get("alt", "") if a_tag.find("img") else ""
-        )
+    def is_valid_fbo(name):
+        if not name or len(name) <= 2:
+            return False
+        # Filter out utility links, navigation keywords, and brand icons
+        ignore_keywords = [
+            "more info",
+            "website",
+            "email",
+            "guaranteed",
+            "read",
+            "write",
+            "photos",
+            "photo",
+            "review",
+            "reviews",
+            "map",
+            "directions",
+            "phillips",
+            "independent",
+            "nata",
+            "customs",
+            "wifi",
+            "hertz",
+            "go rentals",
+            "enterprise",
+            "air elite",
+            "caa",
+            "world fuel",
+            "multi service",
+            "asri",
+            "tel:",
+            "fax:",
+        ]
+        return not any(kw in name.lower() for kw in ignore_keywords)
+
+    # 1. Check all anchor (<a>) and bold (<b>/<strong>) tags together
+    # This covers both <a href="...">FBO Name</a> and <a><b>FBO Name</b></a>
+    for tag in first_td.find_all(["a", "b", "strong"]):
+        text = tag.get_text(strip=True)
+        # Handle cases where <a> contains an <img> with alt text instead of direct text
+        if not text and tag.name == "a" and tag.find("img"):
+            text = tag.find("img").get("alt", "") or tag.find("img").get("title", "")
+
         cleaned = clean_name(text)
-        if (
-            cleaned
-            and len(cleaned) > 2
-            and not any(
-                kw in cleaned.lower()
-                for kw in [
-                    "more info",
-                    "website",
-                    "email",
-                    "guaranteed",
-                    "read",
-                    "write",
-                    "photos",
-                    "review",
-                    "map",
-                ]
-            )
-        ):
+        if is_valid_fbo(cleaned):
             return cleaned
 
-    # 2. Check images with alt/title text
+    # 2. Check standalone images with alt/title text
     for img in first_td.find_all("img"):
         cleaned = clean_name(img.get("alt", "") or img.get("title", ""))
-        if cleaned and len(cleaned) > 2:
-            if not any(
-                kw in cleaned.lower()
-                for kw in [
-                    "phillips",
-                    "independent",
-                    "nata",
-                    "customs",
-                    "wifi",
-                    "hertz",
-                    "go rentals",
-                    "enterprise",
-                    "air elite",
-                    "caa",
-                    "world fuel",
-                    "multi service",
-                    "guaranteed",
-                ]
-            ):
-                return cleaned
-
-    # 3. Check bold/strong tags
-    for b_tag in first_td.find_all(["b", "strong"]):
-        cleaned = clean_name(b_tag.get_text(strip=True))
-        if cleaned and len(cleaned) > 2:
+        if is_valid_fbo(cleaned):
             return cleaned
 
-    # 4. Fallback to raw text lines
+    # 3. Fallback: Parse line-by-line raw text content inside the table cell
     lines = [
         line.strip()
         for line in first_td.get_text(separator="\n").split("\n")
@@ -149,25 +149,7 @@ def get_fbo_name(fbo_container):
     ]
     for line in lines:
         cleaned = clean_name(line)
-        if (
-            cleaned
-            and len(cleaned) > 2
-            and not any(
-                kw in cleaned.lower()
-                for kw in [
-                    "more info",
-                    "website",
-                    "email",
-                    "guaranteed",
-                    "read",
-                    "write",
-                    "photos",
-                    "asri",
-                    "tel:",
-                    "fax:",
-                ]
-            )
-        ):
+        if is_valid_fbo(cleaned):
             return cleaned
 
     return "Unknown FBO"
