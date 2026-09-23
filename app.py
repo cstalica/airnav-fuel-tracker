@@ -236,7 +236,7 @@ def scrape_airport_jeta(icao):
 st.title("✈️ Jet A Fuel Tracker")
 st.write("Search full-service Jet A fuel prices on AirNav.")
 
-airport_input = st.text_input("Airport ICAO Codes:", "KICT, KPTK, KDAL")
+airport_input = st.text_input("Airport Codes Separated by Commas (ICT, FTY):", ""
 
 if st.button("Fetch Prices", type="primary", use_container_width=True):
     airports = [
