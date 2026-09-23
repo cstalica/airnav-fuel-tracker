@@ -85,6 +85,33 @@ def get_fbo_name(fbo_container):
         ).strip()
         return re.sub(r"\d{3}[-\s]?\d{3}[-\s]?\d{4}.*", "", cleaned).strip()
 
+    # 1. Check anchor (hyperlink) tags first
+    for a_tag in first_td.find_all("a"):
+        text = a_tag.get_text(strip=True) or (
+            a_tag.find("img").get("alt", "") if a_tag.find("img") else ""
+        )
+        cleaned = clean_name(text)
+        if (
+            cleaned
+            and len(cleaned) > 2
+            and not any(
+                kw in cleaned.lower()
+                for kw in [
+                    "more info",
+                    "website",
+                    "email",
+                    "guaranteed",
+                    "read",
+                    "write",
+                    "photos",
+                    "review",
+                    "map",
+                ]
+            )
+        ):
+            return cleaned
+
+    # 2. Check images with alt/title text
     for img in first_td.find_all("img"):
         cleaned = clean_name(img.get("alt", "") or img.get("title", ""))
         if cleaned and len(cleaned) > 2:
@@ -108,34 +135,13 @@ def get_fbo_name(fbo_container):
             ):
                 return cleaned
 
+    # 3. Check bold/strong tags
     for b_tag in first_td.find_all(["b", "strong"]):
         cleaned = clean_name(b_tag.get_text(strip=True))
         if cleaned and len(cleaned) > 2:
             return cleaned
 
-    for a_tag in first_td.find_all("a"):
-        text = a_tag.get_text(strip=True) or (
-            a_tag.find("img").get("alt", "") if a_tag.find("img") else ""
-        )
-        cleaned = clean_name(text)
-        if (
-            cleaned
-            and len(cleaned) > 2
-            and not any(
-                kw in cleaned.lower()
-                for kw in [
-                    "more info",
-                    "website",
-                    "email",
-                    "guaranteed",
-                    "read",
-                    "write",
-                    "photos",
-                ]
-            )
-        ):
-            return cleaned
-
+    # 4. Fallback to raw text lines
     lines = [
         line.strip()
         for line in first_td.get_text(separator="\n").split("\n")
