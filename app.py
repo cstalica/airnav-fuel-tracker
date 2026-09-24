@@ -9,7 +9,7 @@ import streamlit as st
 st.set_page_config(
     page_title="Jet A Fuel Tracker",
     page_icon="✈️",
-    layout="centered",  # Reverted back to centered view
+    layout="centered",
     initial_sidebar_state="collapsed",
 )
 
@@ -17,7 +17,7 @@ st.set_page_config(
 @st.cache_data(ttl=3600)  # Caches the EIA fetch so it doesn't re-run on button clicks
 def fetch_eia_previous_week():
     """Fetches NY Harbor ULSD spot prices from EIA and returns the second to last row in the table."""
-    url = "https://www.eia.gov/dnav/pet/hist/eer_epd2dxl0_pf4_y35ny_dpgD.htm"
+    url = "url?id=8"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
@@ -358,14 +358,19 @@ if prev_week:
     st.divider()
 
 # -------------------------------------------------------------
-# AirNav Jet A Search Interface
+# AirNav Jet A Search Interface (Form enables Enter key submission)
 # -------------------------------------------------------------
 st.write("Search Jet A fuel prices on AirNav.")
-airport_input = st.text_input(
-    "Airport Codes Separated by Commas (ICT, FTY, KIXA):", ""
-)
 
-if st.button("Fetch Prices", type="primary", use_container_width=False):
+with st.form("search_form", border=False):
+    airport_input = st.text_input(
+        "Airport Codes Separated by Commas (ICT, FTY, KIXA):", ""
+    )
+    submitted = st.form_submit_button(
+        "Fetch Prices", type="primary", use_container_width=False
+    )
+
+if submitted and airport_input.strip():
     airports = [
         code.strip().upper()
         for code in airport_input.replace(";", ",").split(",")
