@@ -15,7 +15,7 @@ st.set_page_config(
 
 
 def fetch_eia_previous_week():
-    """Fetches NY Harbor ULSD spot prices from EIA and returns the last complete previous week."""
+    """Fetches NY Harbor ULSD spot prices from EIA and returns the second to last row in the table."""
     url = "https://www.eia.gov/dnav/pet/hist/eer_epd2dxl0_pf4_y35ny_dpgD.htm"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -64,14 +64,10 @@ def fetch_eia_previous_week():
                         "Weekly Average": weekly_avg
                     })
 
-        # Find the targeted full week (e.g., Sep 14 to Sep 18)
-        # Skip the current in-progress week (Sep 21 to Sep 25) if present at top
-        for week in recent_weeks:
-            day_count = sum(1 for k in ["Mon", "Tue", "Wed", "Thu", "Fri"] if week[k] != "N/A")
-            if day_count == 5:
-                return week
-
-        return recent_weeks[0] if recent_weeks else None
+        # Return the second-to-last row from the bottom of the table
+        if len(recent_weeks) >= 2:
+            return recent_weeks[-2]
+        return recent_weeks[-1] if recent_weeks else None
 
     except Exception:
         return None
@@ -323,7 +319,7 @@ def scrape_airport_jeta(icao):
 st.title("✈️ Jet A Fuel Tracker")
 
 # -------------------------------------------------------------
-# Previous Full Week Data Display (Top of Main Page)
+# Display Second-to-Last Row (Previous Full Week) at Top
 # -------------------------------------------------------------
 prev_week = fetch_eia_previous_week()
 
