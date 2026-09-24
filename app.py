@@ -34,7 +34,7 @@ def fetch_nymex_ulsd():
             market_time = meta.get("regularMarketTime")
 
             if price is not None and market_time is not None:
-                formatted_price = f"${price:.4f} / gal"
+                formatted_price = f"${price:.2f} / gal"
                 dt = datetime.fromtimestamp(market_time)
                 formatted_time = dt.strftime("%b %d, %Y at %I:%M %p")
                 return formatted_price, formatted_time
