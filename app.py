@@ -361,11 +361,16 @@ if prev_week:
 # AirNav Jet A Search Interface
 # -------------------------------------------------------------
 st.write("Search Jet A fuel prices on AirNav.")
-airport_input = st.text_input(
-    "Airport Codes Separated by Commas (ICT, FTY, KIXA):", ""
-)
 
-if st.button("Fetch Prices", type="primary", use_container_width=False):
+with st.form("airport_search_form", border=False):
+    airport_input = st.text_input(
+        "Airport Codes Separated by Commas (ICT, FTY, KIXA):", ""
+    )
+    submitted = st.form_submit_button(
+        "Fetch Prices", type="primary", use_container_width=False
+    )
+
+if submitted and airport_input.strip():
     airports = [
         code.strip().upper()
         for code in airport_input.replace(";", ",").split(",")
