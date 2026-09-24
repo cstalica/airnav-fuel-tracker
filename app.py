@@ -5,11 +5,11 @@ from bs4 import BeautifulSoup
 import requests
 import streamlit as st
 
-# Wide Layout Page Config
+# Centered Layout Page Config
 st.set_page_config(
     page_title="Jet A Fuel Tracker",
     page_icon="✈️",
-    layout="wide",
+    layout="centered",  # Reverted back to centered view
     initial_sidebar_state="collapsed",
 )
 
@@ -335,7 +335,7 @@ if prev_week:
         f"### ⛽ NY Harbor ULSD Spot Price — Previous Week ({prev_week['Week Of']})"
     )
 
-    col1, col2 = st.columns([1, 3])
+    col1, col2 = st.columns([1, 2])
     with col1:
         st.metric(label="Weekly Average", value=prev_week["Weekly Average Fmt"])
 
@@ -352,7 +352,7 @@ if prev_week:
 
         st.dataframe(
             df_display,
-            use_container_width=False,  # Auto-fits table to column content width
+            use_container_width=False,
             hide_index=True,
         )
     st.divider()
@@ -402,7 +402,7 @@ if st.button("Fetch Prices", type="primary", use_container_width=False):
                     display_text="View on AirNav",
                 ),
             },
-            use_container_width=False,  # Auto-fits table to column content width
+            use_container_width=False,
             hide_index=True,
         )
 
