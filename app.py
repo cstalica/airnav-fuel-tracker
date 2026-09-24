@@ -54,14 +54,19 @@ def fetch_eia_previous_week():
 
                 if valid_prices:
                     weekly_avg = sum(valid_prices) / len(valid_prices)
+                    
+                    # Helper function to format prices to 2 decimal places
+                    fmt = lambda val: f"{val:.2f}" if isinstance(val, (int, float)) else "N/A"
+
                     recent_weeks.append({
                         "Week Of": week_of,
-                        "Mon": daily_prices[0] if daily_prices[0] is not None else "N/A",
-                        "Tue": daily_prices[1] if daily_prices[1] is not None else "N/A",
-                        "Wed": daily_prices[2] if daily_prices[2] is not None else "N/A",
-                        "Thu": daily_prices[3] if daily_prices[3] is not None else "N/A",
-                        "Fri": daily_prices[4] if daily_prices[4] is not None else "N/A",
-                        "Weekly Average": weekly_avg
+                        "Mon": fmt(daily_prices[0]),
+                        "Tue": fmt(daily_prices[1]),
+                        "Wed": fmt(daily_prices[2]),
+                        "Thu": fmt(daily_prices[3]),
+                        "Fri": fmt(daily_prices[4]),
+                        "Weekly Average": weekly_avg,
+                        "Weekly Average Fmt": f"${weekly_avg:.2f} / gal"
                     })
 
         # Return the second-to-last row from the bottom of the table
@@ -330,13 +335,23 @@ if prev_week:
     with col1:
         st.metric(
             label="Weekly Average",
-            value=f"${prev_week['Weekly Average']:.4f} / gal"
+            value=prev_week["Weekly Average Fmt"]
         )
     
     with col2:
-        df_week = pd.DataFrame([prev_week])
+        # Prepare display dataframe excluding temporary formatting columns
+        df_display = pd.DataFrame([{
+            "Week Of": prev_week["Week Of"],
+            "Mon": prev_week["Mon"],
+            "Tue": prev_week["Tue"],
+            "Wed": prev_week["Wed"],
+            "Thu": prev_week["Thu"],
+            "Fri": prev_week["Fri"],
+            "Weekly Average": f"{prev_week['Weekly Average']:.2f}"
+        }])
+        
         st.dataframe(
-            df_week,
+            df_display,
             use_container_width=True,
             hide_index=True,
         )
