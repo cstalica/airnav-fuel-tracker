@@ -1,8 +1,7 @@
 from datetime import datetime
 import re
-import bs4
-from bs4 import BeautifulSoup
 import pandas as pd
+from bs4 import BeautifulSoup
 import requests
 import streamlit as st
 
@@ -15,32 +14,60 @@ st.set_page_config(
 )
 
 
-@st.cache_data(ttl=300)
-def fetch_nymex_ulsd():
-    """Fetch live NYMEX Ultra-Low-Sulfur Diesel (HO=F) futures price."""
-    try:
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/HO=F"
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-        }
-        res = requests.get(url, headers=headers, timeout=5)
-        if res.status_code == 200:
-            data = res.json()
-            meta = data["chart"]["result"][0]["meta"]
-            price = meta.get("regularMarketPrice")
-            market_time = meta.get("regularMarketTime")
+def fetch_eia_ulsd_spot_prices():
+    """Fetches NY Harbor ULSD spot prices from EIA and computes weekly averages."""
+    url = "https://www.eia.gov/dnav/pet/hist/eer_epd2dxl0_pf4_y35ny_dpgD.htm"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
 
-            if price is not None and market_time is not None:
-                formatted_price = f"${price:.2f} / gal"
-                dt = datetime.fromtimestamp(market_time)
-                formatted_time = dt.strftime("%b %d, %Y at %I:%M %p")
-                return formatted_price, formatted_time
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code != 200:
+            return pd.DataFrame()
+
+        soup = BeautifulSoup(res.content, "html.parser")
+        
+        # Locate the table containing the spot price data
+        table = None
+        for t in soup.find_all("table"):
+            if "Week Of" in t.get_text():
+                table = t
+                break
+
+        if not table:
+            return pd.DataFrame()
+
+        rows = []
+        for tr in table.find_all("tr"):
+            cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
+            if len(cells) >= 6 and "to" in cells[0]:
+                week_of = cells[0]
+                daily_prices = []
+                for val in cells[1:6]:
+                    try:
+                        daily_prices.append(float(val))
+                    except ValueError:
+                        daily_prices.append(None)
+
+                # Ensure 5 daily price columns
+                while len(daily_prices) < 5:
+                    daily_prices.append(None)
+
+                # Compute average ignoring missing/holiday days
+                valid_prices = [p for p in daily_prices if p is not None]
+                weekly_avg = sum(valid_prices) / len(valid_prices) if valid_prices else None
+
+                rows.append([week_of] + daily_prices + [weekly_avg])
+
+        df = pd.DataFrame(
+            rows,
+            columns=["Week Of", "Mon", "Tue", "Wed", "Thu", "Fri", "Weekly Average"]
+        )
+        return df
+
     except Exception:
-        pass
-    return None, None
+        return pd.DataFrame()
 
 
 def parse_fbo_fuel_table(fuel_table):
@@ -115,7 +142,6 @@ def get_fbo_name(fbo_container):
     if not fbo_container:
         return "Unknown FBO", None
 
-    # Focus specifically on the first TD cell (Business Name column)
     tds = fbo_container.find_all("td", recursive=False) or fbo_container.find_all("td")
     target_elem = tds[0] if tds else fbo_container
 
@@ -154,7 +180,6 @@ def get_fbo_name(fbo_container):
         "click here",
     ]
 
-    # 1. Check for <a> hyperlink tags containing '/fbo/'
     fbo_links = target_elem.find_all("a", href=re.compile(r"/fbo/", re.IGNORECASE))
     for a_tag in fbo_links:
         text = a_tag.get_text(strip=True) or (
@@ -170,7 +195,6 @@ def get_fbo_name(fbo_container):
             full_url = f"https://www.airnav.com{href}" if href.startswith("/") else href
             return cleaned, full_url
 
-    # 2. Check for any other <a> tags in the business name cell
     for a_tag in target_elem.find_all("a"):
         text = a_tag.get_text(strip=True) or (
             a_tag.find("img").get("alt", "") if a_tag.find("img") else ""
@@ -185,7 +209,6 @@ def get_fbo_name(fbo_container):
             full_url = f"https://www.airnav.com{href}" if href.startswith("/") else href
             return cleaned, full_url
 
-    # 3. Check for <b> or <strong> tags
     for b_tag in target_elem.find_all(["b", "strong"]):
         cleaned = clean_name(b_tag.get_text(strip=True))
         if (
@@ -195,7 +218,6 @@ def get_fbo_name(fbo_container):
         ):
             return cleaned, None
 
-    # 4. Check for <img> tags
     for img in target_elem.find_all("img"):
         cleaned = clean_name(img.get("alt", "") or img.get("title", ""))
         if (
@@ -208,7 +230,6 @@ def get_fbo_name(fbo_container):
         ):
             return cleaned, None
 
-    # 5. Extract plain text line-by-line when business name is plain text
     lines = [
         line.strip()
         for line in target_elem.get_text(separator="\n").split("\n")
@@ -294,71 +315,94 @@ def scrape_airport_jeta(icao):
 
 # UI Layout
 st.title("✈️ Jet A Fuel Tracker")
-st.write("Search Jet A fuel prices on AirNav.")
 
-# NYMEX ULSD Benchmark Card
-ulsd_price, ulsd_time = fetch_nymex_ulsd()
-if ulsd_price:
-    m_col1, m_col2 = st.columns([1, 1])
-    with m_col1:
-        st.metric(
-            label="🛢️ NYMEX ULSD Futures (HO=F)",
-            value=ulsd_price,
-        )
-    with m_col2:
-        st.caption(f"**Market Timestamp:**\n\n{ulsd_time}")
-    st.divider()
+# Tab navigation for FBO Search and EIA ULSD Spot Prices
+tab1, tab2 = st.tabs(["AirNav Jet A Tracker", "NY Harbor ULSD Spot Prices"])
 
-airport_input = st.text_input(
-    "Airport Codes Separated by Commas (ICT, FTY, KIXA):", ""
-)
+with tab1:
+    st.write("Search Jet A fuel prices on AirNav.")
+    airport_input = st.text_input("Airport Codes Separated by Commas (ICT, FTY, KIXA):", "")
 
-if st.button("Fetch Prices", type="primary", use_container_width=True):
-    airports = [
-        code.strip().upper()
-        for code in airport_input.replace(";", ",").split(",")
-        if code.strip()
-    ]
-    all_data = []
+    if st.button("Fetch Prices", type="primary", use_container_width=True):
+        airports = [
+            code.strip().upper()
+            for code in airport_input.replace(";", ",").split(",")
+            if code.strip()
+        ]
+        all_data = []
 
-    progress_bar = st.progress(0)
-    for idx, icao in enumerate(airports):
-        st.caption(f"Fetching {icao}...")
-        results = scrape_airport_jeta(icao)
-        if results:
-            all_data.extend(results)
-        else:
-            all_data.append(
-                {
-                    "Airport": icao,
-                    "FBO Name": "N/A or Error",
-                    "FBO Link": "",
-                    "Jet A Price": "N/A",
-                    "Price Updated": "N/A",
-                }
+        progress_bar = st.progress(0)
+        for idx, icao in enumerate(airports):
+            st.caption(f"Fetching {icao}...")
+            results = scrape_airport_jeta(icao)
+            if results:
+                all_data.extend(results)
+            else:
+                all_data.append(
+                    {
+                        "Airport": icao,
+                        "FBO Name": "N/A or Error",
+                        "FBO Link": "",
+                        "Jet A Price": "N/A",
+                        "Price Updated": "N/A",
+                    }
+                )
+            progress_bar.progress((idx + 1) / len(airports))
+
+        if all_data:
+            df = pd.DataFrame(all_data)
+            st.subheader("Results")
+            st.dataframe(
+                df,
+                column_config={
+                    "FBO Link": st.column_config.LinkColumn(
+                        "FBO Link",
+                        display_text="View on AirNav",
+                    ),
+                },
+                use_container_width=True,
+                hide_index=True,
             )
-        progress_bar.progress((idx + 1) / len(airports))
 
-    if all_data:
-        df = pd.DataFrame(all_data)
-        st.subheader("Results")
-        st.dataframe(
-            df,
-            column_config={
-                "FBO Link": st.column_config.LinkColumn(
-                    "FBO Link",
-                    display_text="View on AirNav",
-                ),
-            },
-            use_container_width=True,
-            hide_index=True,
-        )
+            csv = df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="📄 Export to CSV",
+                data=csv,
+                file_name=f"airnav_jeta_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
 
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="📄 Export to CSV",
-            data=csv,
-            file_name=f"airnav_jeta_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
+with tab2:
+    st.subheader("EIA NY Harbor ULSD Spot Prices")
+    st.write("Fetches historical weekly spot prices with a calculated weekly average column.")
+    
+    if st.button("Fetch EIA Spot Data", use_container_width=True):
+        with st.spinner("Fetching EIA Spot Data..."):
+            eia_df = fetch_eia_ulsd_spot_prices()
+            
+        if not eia_df.empty:
+            st.dataframe(
+                eia_df,
+                column_config={
+                    "Weekly Average": st.column_config.NumberColumn(format="$%.4f"),
+                    "Mon": st.column_config.NumberColumn(format="$%.3f"),
+                    "Tue": st.column_config.NumberColumn(format="$%.3f"),
+                    "Wed": st.column_config.NumberColumn(format="$%.3f"),
+                    "Thu": st.column_config.NumberColumn(format="$%.3f"),
+                    "Fri": st.column_config.NumberColumn(format="$%.3f"),
+                },
+                use_container_width=True,
+                hide_index=True,
+            )
+            
+            eia_csv = eia_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="📄 Export EIA Data to CSV",
+                data=eia_csv,
+                file_name=f"eia_ulsd_spot_prices_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        else:
+            st.error("Failed to fetch EIA spot price data.")
