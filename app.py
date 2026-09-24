@@ -9,7 +9,7 @@ import streamlit as st
 st.set_page_config(
     page_title="Jet A Fuel Tracker",
     page_icon="✈️",
-    layout="centered",
+    layout="centered",  # Reverted back to centered view
     initial_sidebar_state="collapsed",
 )
 
@@ -31,8 +31,7 @@ def fetch_eia_previous_week():
 
         table = None
         for t in soup.find_all("table"):
-            table_text = t.get_text()
-            if "Week Of" in table_text or "Weekly" in table_text or "to" in table_text:
+            if "Week Of" in t.get_text():
                 table = t
                 break
 
@@ -47,7 +46,7 @@ def fetch_eia_previous_week():
                 daily_prices = []
                 for val in cells[1:6]:
                     try:
-                        daily_prices.append(float(val.replace(",", "")))
+                        daily_prices.append(float(val))
                     except ValueError:
                         daily_prices.append(None)
 
@@ -58,7 +57,7 @@ def fetch_eia_previous_week():
                     weekly_avg = sum(valid_prices) / len(valid_prices)
 
                     fmt = lambda val: (
-                        f"{val:.3f}" if isinstance(val, (int, float)) else "N/A"
+                        f"{val:.2f}" if isinstance(val, (int, float)) else "N/A"
                     )
 
                     recent_weeks.append({
@@ -69,7 +68,7 @@ def fetch_eia_previous_week():
                         "Thu": fmt(daily_prices[3]),
                         "Fri": fmt(daily_prices[4]),
                         "Weekly Average": weekly_avg,
-                        "Weekly Average Fmt": f"${weekly_avg:.3f} / gal",
+                        "Weekly Average Fmt": f"${weekly_avg:.2f} / gal",
                     })
 
         # Return the second-to-last row from the bottom of the table
@@ -348,7 +347,7 @@ if prev_week:
             "Wed": prev_week["Wed"],
             "Thu": prev_week["Thu"],
             "Fri": prev_week["Fri"],
-            "Weekly Average": f"{prev_week['Weekly Average']:.3f}",
+            "Weekly Average": f"{prev_week['Weekly Average']:.2f}",
         }])
 
         st.dataframe(
@@ -356,25 +355,17 @@ if prev_week:
             use_container_width=False,
             hide_index=True,
         )
-else:
-    st.warning("Unable to retrieve ULSD spot price data from EIA.")
-
-st.divider()
+    st.divider()
 
 # -------------------------------------------------------------
-# AirNav Jet A Search Interface (Form enables Enter key submission)
+# AirNav Jet A Search Interface
 # -------------------------------------------------------------
 st.write("Search Jet A fuel prices on AirNav.")
+airport_input = st.text_input(
+    "Airport Codes Separated by Commas (ICT, FTY, KIXA):", ""
+)
 
-with st.form("search_form", border=False):
-    airport_input = st.text_input(
-        "Airport Codes Separated by Commas (ICT, FTY, KIXA):", ""
-    )
-    submitted = st.form_submit_button(
-        "Fetch Prices", type="primary", use_container_width=False
-    )
-
-if submitted and airport_input.strip():
+if st.button("Fetch Prices", type="primary", use_container_width=False):
     airports = [
         code.strip().upper()
         for code in airport_input.replace(";", ",").split(",")
