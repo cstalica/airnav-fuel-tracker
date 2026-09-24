@@ -1,7 +1,8 @@
 from datetime import datetime
 import re
-import pandas as pd
+import bs4
 from bs4 import BeautifulSoup
+import pandas as pd
 import requests
 import streamlit as st
 
@@ -14,72 +15,32 @@ st.set_page_config(
 )
 
 
-def fetch_latest_week_eia():
-    """Fetches NY Harbor ULSD spot prices from EIA and returns the most recent completed previous week."""
-    url = "https://www.eia.gov/dnav/pet/hist/eer_epd2dxl0_pf4_y35ny_dpgD.htm"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-
+@st.cache_data(ttl=300)
+def fetch_nymex_ulsd():
+    """Fetch live NYMEX Ultra-Low-Sulfur Diesel (HO=F) futures price."""
     try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code != 200:
-            return None
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/HO=F"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+        }
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            meta = data["chart"]["result"][0]["meta"]
+            price = meta.get("regularMarketPrice")
+            market_time = meta.get("regularMarketTime")
 
-        soup = BeautifulSoup(res.content, "html.parser")
-
-        table = None
-        for t in soup.find_all("table"):
-            if "Week Of" in t.get_text():
-                table = t
-                break
-
-        if not table:
-            return None
-
-        recent_weeks = []
-        for tr in table.find_all("tr"):
-            cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
-            if len(cells) >= 6 and "to" in cells[0]:
-                week_of = cells[0]
-                daily_prices = []
-                for val in cells[1:6]:
-                    try:
-                        daily_prices.append(float(val))
-                    except ValueError:
-                        daily_prices.append(None)
-
-                # Filter out None values to get valid reported daily prices
-                valid_prices = [p for p in daily_prices if p is not None]
-
-                # Must have at least one valid price in the week
-                if valid_prices:
-                    weekly_avg = sum(valid_prices) / len(valid_prices)
-                    recent_weeks.append({
-                        "Week Of": week_of,
-                        "Mon": daily_prices[0] if daily_prices[0] is not None else "N/A",
-                        "Tue": daily_prices[1] if daily_prices[1] is not None else "N/A",
-                        "Wed": daily_prices[2] if daily_prices[2] is not None else "N/A",
-                        "Thu": daily_prices[3] if daily_prices[3] is not None else "N/A",
-                        "Fri": daily_prices[4] if daily_prices[4] is not None else "N/A",
-                        "Weekly Average": weekly_avg
-                    })
-
-        # The EIA table lists the newest weeks first.
-        # If the top row is an in-progress/partial current week, pick index 1 for the previous full week.
-        if len(recent_weeks) > 1:
-            # Check if top row is incomplete (fewer than 5 trading days posted)
-            first_week_valid_count = sum(1 for k in ["Mon", "Tue", "Wed", "Thu", "Fri"] if recent_weeks[0][k] != "N/A")
-            if first_week_valid_count < 5:
-                return recent_weeks[1]  # Return previous completed week
-            return recent_weeks[0]
-        elif recent_weeks:
-            return recent_weeks[0]
-
-        return None
-
+            if price is not None and market_time is not None:
+                formatted_price = f"${price:.2f} / gal"
+                dt = datetime.fromtimestamp(market_time)
+                formatted_time = dt.strftime("%b %d, %Y at %I:%M %p")
+                return formatted_price, formatted_time
     except Exception:
-        return None
+        pass
+    return None, None
 
 
 def parse_fbo_fuel_table(fuel_table):
@@ -131,6 +92,7 @@ def parse_fbo_fuel_table(fuel_table):
             if val and val != "N/A":
                 as_price = val
 
+    # Priority order: FS -> SS -> AS
     price = fs_price or ss_price or as_price
 
     table_text = fuel_table.get_text()
@@ -153,6 +115,7 @@ def get_fbo_name(fbo_container):
     if not fbo_container:
         return "Unknown FBO", None
 
+    # Focus specifically on the first TD cell (Business Name column)
     tds = fbo_container.find_all("td", recursive=False) or fbo_container.find_all("td")
     target_elem = tds[0] if tds else fbo_container
 
@@ -191,6 +154,7 @@ def get_fbo_name(fbo_container):
         "click here",
     ]
 
+    # 1. Check for <a> hyperlink tags containing '/fbo/'
     fbo_links = target_elem.find_all("a", href=re.compile(r"/fbo/", re.IGNORECASE))
     for a_tag in fbo_links:
         text = a_tag.get_text(strip=True) or (
@@ -206,6 +170,7 @@ def get_fbo_name(fbo_container):
             full_url = f"https://www.airnav.com{href}" if href.startswith("/") else href
             return cleaned, full_url
 
+    # 2. Check for any other <a> tags in the business name cell
     for a_tag in target_elem.find_all("a"):
         text = a_tag.get_text(strip=True) or (
             a_tag.find("img").get("alt", "") if a_tag.find("img") else ""
@@ -220,6 +185,7 @@ def get_fbo_name(fbo_container):
             full_url = f"https://www.airnav.com{href}" if href.startswith("/") else href
             return cleaned, full_url
 
+    # 3. Check for <b> or <strong> tags
     for b_tag in target_elem.find_all(["b", "strong"]):
         cleaned = clean_name(b_tag.get_text(strip=True))
         if (
@@ -229,6 +195,7 @@ def get_fbo_name(fbo_container):
         ):
             return cleaned, None
 
+    # 4. Check for <img> tags
     for img in target_elem.find_all("img"):
         cleaned = clean_name(img.get("alt", "") or img.get("title", ""))
         if (
@@ -241,6 +208,7 @@ def get_fbo_name(fbo_container):
         ):
             return cleaned, None
 
+    # 5. Extract plain text line-by-line when business name is plain text
     lines = [
         line.strip()
         for line in target_elem.get_text(separator="\n").split("\n")
@@ -324,38 +292,26 @@ def scrape_airport_jeta(icao):
     return fbo_results
 
 
-# Main UI Layout
+# UI Layout
 st.title("✈️ Jet A Fuel Tracker")
+st.write("Search Jet A fuel prices on AirNav.")
 
-# -------------------------------------------------------------
-# Display Previous Week EIA Spot Price Data on Main Page
-# -------------------------------------------------------------
-latest_week = fetch_latest_week_eia()
-
-if latest_week:
-    st.markdown(f"### ⛽ NY Harbor ULSD Spot Price — Previous Week ({latest_week['Week Of']})")
-    
-    col1, col2 = st.columns([1, 2])
-    with col1:
+# NYMEX ULSD Benchmark Card
+ulsd_price, ulsd_time = fetch_nymex_ulsd()
+if ulsd_price:
+    m_col1, m_col2 = st.columns([1, 1])
+    with m_col1:
         st.metric(
-            label="Weekly Average",
-            value=f"${latest_week['Weekly Average']:.4f} / gal"
+            label="🛢️ NYMEX ULSD Futures (HO=F)",
+            value=ulsd_price,
         )
-    
-    with col2:
-        df_week = pd.DataFrame([latest_week])
-        st.dataframe(
-            df_week,
-            use_container_width=True,
-            hide_index=True,
-        )
+    with m_col2:
+        st.caption(f"**Market Timestamp:**\n\n{ulsd_time}")
     st.divider()
 
-# -------------------------------------------------------------
-# AirNav Jet A Search Interface
-# -------------------------------------------------------------
-st.write("Search Jet A fuel prices on AirNav.")
-airport_input = st.text_input("Airport Codes Separated by Commas (ICT, FTY, KIXA):", "")
+airport_input = st.text_input(
+    "Airport Codes Separated by Commas (ICT, FTY, KIXA):", ""
+)
 
 if st.button("Fetch Prices", type="primary", use_container_width=True):
     airports = [
