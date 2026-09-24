@@ -1,8 +1,7 @@
 from datetime import datetime
 import re
-import bs4
-from bs4 import BeautifulSoup
 import pandas as pd
+from bs4 import BeautifulSoup
 import requests
 import streamlit as st
 
@@ -13,34 +12,6 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed",
 )
-
-
-@st.cache_data(ttl=300)
-def fetch_nymex_ulsd():
-    """Fetch live NYMEX Ultra-Low-Sulfur Diesel (HO=F) futures price."""
-    try:
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/HO=F"
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-        }
-        res = requests.get(url, headers=headers, timeout=5)
-        if res.status_code == 200:
-            data = res.json()
-            meta = data["chart"]["result"][0]["meta"]
-            price = meta.get("regularMarketPrice")
-            market_time = meta.get("regularMarketTime")
-
-            if price is not None and market_time is not None:
-                formatted_price = f"${price:.2f} / gal"
-                dt = datetime.fromtimestamp(market_time)
-                formatted_time = dt.strftime("%b %d, %Y at %I:%M %p")
-                return formatted_price, formatted_time
-    except Exception:
-        pass
-    return None, None
 
 
 def parse_fbo_fuel_table(fuel_table):
@@ -296,22 +267,7 @@ def scrape_airport_jeta(icao):
 st.title("✈️ Jet A Fuel Tracker")
 st.write("Search Jet A fuel prices on AirNav.")
 
-# NYMEX ULSD Benchmark Card
-ulsd_price, ulsd_time = fetch_nymex_ulsd()
-if ulsd_price:
-    m_col1, m_col2 = st.columns([1, 1])
-    with m_col1:
-        st.metric(
-            label="🛢️ NYMEX ULSD Futures (HO=F)",
-            value=ulsd_price,
-        )
-    with m_col2:
-        st.caption(f"**Market Timestamp:**\n\n{ulsd_time}")
-    st.divider()
-
-airport_input = st.text_input(
-    "Airport Codes Separated by Commas (ICT, FTY, KIXA):", ""
-)
+airport_input = st.text_input("Airport Codes Separated by Commas (ICT, FTY, KIXA):", "")
 
 if st.button("Fetch Prices", type="primary", use_container_width=True):
     airports = [
