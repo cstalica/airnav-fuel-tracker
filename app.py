@@ -14,6 +14,7 @@ st.set_page_config(
 )
 
 
+@st.cache_data(ttl=3600)  # Caches the EIA fetch so it doesn't re-run on button clicks
 def fetch_eia_previous_week():
     """Fetches NY Harbor ULSD spot prices from EIA and returns the second to last row in the table."""
     url = "https://www.eia.gov/dnav/pet/hist/eer_epd2dxl0_pf4_y35ny_dpgD.htm"
@@ -54,9 +55,10 @@ def fetch_eia_previous_week():
 
                 if valid_prices:
                     weekly_avg = sum(valid_prices) / len(valid_prices)
-                    
-                    # Helper function to format prices to 2 decimal places
-                    fmt = lambda val: f"{val:.2f}" if isinstance(val, (int, float)) else "N/A"
+
+                    fmt = lambda val: (
+                        f"{val:.2f}" if isinstance(val, (int, float)) else "N/A"
+                    )
 
                     recent_weeks.append({
                         "Week Of": week_of,
@@ -66,7 +68,7 @@ def fetch_eia_previous_week():
                         "Thu": fmt(daily_prices[3]),
                         "Fri": fmt(daily_prices[4]),
                         "Weekly Average": weekly_avg,
-                        "Weekly Average Fmt": f"${weekly_avg:.2f} / gal"
+                        "Weekly Average Fmt": f"${weekly_avg:.2f} / gal",
                     })
 
         # Return the second-to-last row from the bottom of the table
@@ -324,22 +326,20 @@ def scrape_airport_jeta(icao):
 st.title("✈️ Jet A Fuel Tracker")
 
 # -------------------------------------------------------------
-# Display Second-to-Last Row (Previous Full Week) at Top
+# Display Second-to-Last Row (Cached EIA Previous Full Week)
 # -------------------------------------------------------------
 prev_week = fetch_eia_previous_week()
 
 if prev_week:
-    st.markdown(f"### ⛽ NY Harbor ULSD Spot Price — Previous Week ({prev_week['Week Of']})")
-    
+    st.markdown(
+        f"### ⛽ NY Harbor ULSD Spot Price — Previous Week ({prev_week['Week Of']})"
+    )
+
     col1, col2 = st.columns([1, 2])
     with col1:
-        st.metric(
-            label="Weekly Average",
-            value=prev_week["Weekly Average Fmt"]
-        )
-    
+        st.metric(label="Weekly Average", value=prev_week["Weekly Average Fmt"])
+
     with col2:
-        # Prepare display dataframe excluding temporary formatting columns
         df_display = pd.DataFrame([{
             "Week Of": prev_week["Week Of"],
             "Mon": prev_week["Mon"],
@@ -347,9 +347,9 @@ if prev_week:
             "Wed": prev_week["Wed"],
             "Thu": prev_week["Thu"],
             "Fri": prev_week["Fri"],
-            "Weekly Average": f"{prev_week['Weekly Average']:.2f}"
+            "Weekly Average": f"{prev_week['Weekly Average']:.2f}",
         }])
-        
+
         st.dataframe(
             df_display,
             use_container_width=True,
@@ -361,7 +361,9 @@ if prev_week:
 # AirNav Jet A Search Interface
 # -------------------------------------------------------------
 st.write("Search Jet A fuel prices on AirNav.")
-airport_input = st.text_input("Airport Codes Separated by Commas (ICT, FTY, KIXA):", "")
+airport_input = st.text_input(
+    "Airport Codes Separated by Commas (ICT, FTY, KIXA):", ""
+)
 
 if st.button("Fetch Prices", type="primary", use_container_width=True):
     airports = [
