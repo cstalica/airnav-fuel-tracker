@@ -14,8 +14,8 @@ st.set_page_config(
 )
 
 
-def fetch_latest_full_week_eia():
-    """Fetches NY Harbor ULSD spot prices from EIA and returns only the last full week."""
+def fetch_latest_week_eia():
+    """Fetches NY Harbor ULSD spot prices from EIA and returns the most recent completed previous week."""
     url = "https://www.eia.gov/dnav/pet/hist/eer_epd2dxl0_pf4_y35ny_dpgD.htm"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -37,7 +37,7 @@ def fetch_latest_full_week_eia():
         if not table:
             return None
 
-        full_weeks = []
+        recent_weeks = []
         for tr in table.find_all("tr"):
             cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
             if len(cells) >= 6 and "to" in cells[0]:
@@ -49,21 +49,34 @@ def fetch_latest_full_week_eia():
                     except ValueError:
                         daily_prices.append(None)
 
-                # Check if week has all 5 valid trading day prices
-                if len(daily_prices) == 5 and all(p is not None for p in daily_prices):
-                    weekly_avg = sum(daily_prices) / len(daily_prices)
-                    full_weeks.append({
+                # Filter out None values to get valid reported daily prices
+                valid_prices = [p for p in daily_prices if p is not None]
+
+                # Must have at least one valid price in the week
+                if valid_prices:
+                    weekly_avg = sum(valid_prices) / len(valid_prices)
+                    recent_weeks.append({
                         "Week Of": week_of,
-                        "Mon": daily_prices[0],
-                        "Tue": daily_prices[1],
-                        "Wed": daily_prices[2],
-                        "Thu": daily_prices[3],
-                        "Fri": daily_prices[4],
+                        "Mon": daily_prices[0] if daily_prices[0] is not None else "N/A",
+                        "Tue": daily_prices[1] if daily_prices[1] is not None else "N/A",
+                        "Wed": daily_prices[2] if daily_prices[2] is not None else "N/A",
+                        "Thu": daily_prices[3] if daily_prices[3] is not None else "N/A",
+                        "Fri": daily_prices[4] if daily_prices[4] is not None else "N/A",
                         "Weekly Average": weekly_avg
                     })
 
-        # Return the last (most recent) complete week
-        return full_weeks[-1] if full_weeks else None
+        # The EIA table lists the newest weeks first.
+        # If the top row is an in-progress/partial current week, pick index 1 for the previous full week.
+        if len(recent_weeks) > 1:
+            # Check if top row is incomplete (fewer than 5 trading days posted)
+            first_week_valid_count = sum(1 for k in ["Mon", "Tue", "Wed", "Thu", "Fri"] if recent_weeks[0][k] != "N/A")
+            if first_week_valid_count < 5:
+                return recent_weeks[1]  # Return previous completed week
+            return recent_weeks[0]
+        elif recent_weeks:
+            return recent_weeks[0]
+
+        return None
 
     except Exception:
         return None
@@ -315,32 +328,24 @@ def scrape_airport_jeta(icao):
 st.title("✈️ Jet A Fuel Tracker")
 
 # -------------------------------------------------------------
-# Display Last Full Previous Week EIA Spot Price Data on Main Page
+# Display Previous Week EIA Spot Price Data on Main Page
 # -------------------------------------------------------------
-last_full_week = fetch_latest_full_week_eia()
+latest_week = fetch_latest_week_eia()
 
-if last_full_week:
-    st.markdown(f"### ⛽ NY Harbor ULSD Spot Price — Previous Full Week ({last_full_week['Week Of']})")
+if latest_week:
+    st.markdown(f"### ⛽ NY Harbor ULSD Spot Price — Previous Week ({latest_week['Week Of']})")
     
     col1, col2 = st.columns([1, 2])
     with col1:
         st.metric(
             label="Weekly Average",
-            value=f"${last_full_week['Weekly Average']:.4f} / gal"
+            value=f"${latest_week['Weekly Average']:.4f} / gal"
         )
     
     with col2:
-        df_week = pd.DataFrame([last_full_week])
+        df_week = pd.DataFrame([latest_week])
         st.dataframe(
             df_week,
-            column_config={
-                "Weekly Average": st.column_config.NumberColumn(format="$%.4f"),
-                "Mon": st.column_config.NumberColumn(format="$%.3f"),
-                "Tue": st.column_config.NumberColumn(format="$%.3f"),
-                "Wed": st.column_config.NumberColumn(format="$%.3f"),
-                "Thu": st.column_config.NumberColumn(format="$%.3f"),
-                "Fri": st.column_config.NumberColumn(format="$%.3f"),
-            },
             use_container_width=True,
             hide_index=True,
         )
