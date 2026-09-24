@@ -14,6 +14,69 @@ st.set_page_config(
 )
 
 
+def fetch_eia_previous_week():
+    """Fetches NY Harbor ULSD spot prices from EIA and returns the last complete previous week."""
+    url = "https://www.eia.gov/dnav/pet/hist/eer_epd2dxl0_pf4_y35ny_dpgD.htm"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code != 200:
+            return None
+
+        soup = BeautifulSoup(res.content, "html.parser")
+
+        table = None
+        for t in soup.find_all("table"):
+            if "Week Of" in t.get_text():
+                table = t
+                break
+
+        if not table:
+            return None
+
+        recent_weeks = []
+        for tr in table.find_all("tr"):
+            cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
+            if len(cells) >= 6 and "to" in cells[0]:
+                week_of = cells[0]
+                daily_prices = []
+                for val in cells[1:6]:
+                    try:
+                        daily_prices.append(float(val))
+                    except ValueError:
+                        daily_prices.append(None)
+
+                # Filter valid reported daily prices
+                valid_prices = [p for p in daily_prices if p is not None]
+
+                if valid_prices:
+                    weekly_avg = sum(valid_prices) / len(valid_prices)
+                    recent_weeks.append({
+                        "Week Of": week_of,
+                        "Mon": daily_prices[0] if daily_prices[0] is not None else "N/A",
+                        "Tue": daily_prices[1] if daily_prices[1] is not None else "N/A",
+                        "Wed": daily_prices[2] if daily_prices[2] is not None else "N/A",
+                        "Thu": daily_prices[3] if daily_prices[3] is not None else "N/A",
+                        "Fri": daily_prices[4] if daily_prices[4] is not None else "N/A",
+                        "Weekly Average": weekly_avg
+                    })
+
+        # Find the targeted full week (e.g., Sep 14 to Sep 18)
+        # Skip the current in-progress week (Sep 21 to Sep 25) if present at top
+        for week in recent_weeks:
+            day_count = sum(1 for k in ["Mon", "Tue", "Wed", "Thu", "Fri"] if week[k] != "N/A")
+            if day_count == 5:
+                return week
+
+        return recent_weeks[0] if recent_weeks else None
+
+    except Exception:
+        return None
+
+
 def parse_fbo_fuel_table(fuel_table):
     headers = []
     for tr in fuel_table.find_all("tr"):
@@ -63,7 +126,6 @@ def parse_fbo_fuel_table(fuel_table):
             if val and val != "N/A":
                 as_price = val
 
-    # Priority order: FS -> SS -> AS
     price = fs_price or ss_price or as_price
 
     table_text = fuel_table.get_text()
@@ -86,7 +148,6 @@ def get_fbo_name(fbo_container):
     if not fbo_container:
         return "Unknown FBO", None
 
-    # Focus specifically on the first TD cell (Business Name column)
     tds = fbo_container.find_all("td", recursive=False) or fbo_container.find_all("td")
     target_elem = tds[0] if tds else fbo_container
 
@@ -125,7 +186,6 @@ def get_fbo_name(fbo_container):
         "click here",
     ]
 
-    # 1. Check for <a> hyperlink tags containing '/fbo/'
     fbo_links = target_elem.find_all("a", href=re.compile(r"/fbo/", re.IGNORECASE))
     for a_tag in fbo_links:
         text = a_tag.get_text(strip=True) or (
@@ -141,7 +201,6 @@ def get_fbo_name(fbo_container):
             full_url = f"https://www.airnav.com{href}" if href.startswith("/") else href
             return cleaned, full_url
 
-    # 2. Check for any other <a> tags in the business name cell
     for a_tag in target_elem.find_all("a"):
         text = a_tag.get_text(strip=True) or (
             a_tag.find("img").get("alt", "") if a_tag.find("img") else ""
@@ -156,7 +215,6 @@ def get_fbo_name(fbo_container):
             full_url = f"https://www.airnav.com{href}" if href.startswith("/") else href
             return cleaned, full_url
 
-    # 3. Check for <b> or <strong> tags
     for b_tag in target_elem.find_all(["b", "strong"]):
         cleaned = clean_name(b_tag.get_text(strip=True))
         if (
@@ -166,7 +224,6 @@ def get_fbo_name(fbo_container):
         ):
             return cleaned, None
 
-    # 4. Check for <img> tags
     for img in target_elem.find_all("img"):
         cleaned = clean_name(img.get("alt", "") or img.get("title", ""))
         if (
@@ -179,7 +236,6 @@ def get_fbo_name(fbo_container):
         ):
             return cleaned, None
 
-    # 5. Extract plain text line-by-line when business name is plain text
     lines = [
         line.strip()
         for line in target_elem.get_text(separator="\n").split("\n")
@@ -263,10 +319,37 @@ def scrape_airport_jeta(icao):
     return fbo_results
 
 
-# UI Layout
+# Main UI Layout
 st.title("✈️ Jet A Fuel Tracker")
-st.write("Search Jet A fuel prices on AirNav.")
 
+# -------------------------------------------------------------
+# Previous Full Week Data Display (Top of Main Page)
+# -------------------------------------------------------------
+prev_week = fetch_eia_previous_week()
+
+if prev_week:
+    st.markdown(f"### ⛽ NY Harbor ULSD Spot Price — Previous Week ({prev_week['Week Of']})")
+    
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.metric(
+            label="Weekly Average",
+            value=f"${prev_week['Weekly Average']:.4f} / gal"
+        )
+    
+    with col2:
+        df_week = pd.DataFrame([prev_week])
+        st.dataframe(
+            df_week,
+            use_container_width=True,
+            hide_index=True,
+        )
+    st.divider()
+
+# -------------------------------------------------------------
+# AirNav Jet A Search Interface
+# -------------------------------------------------------------
+st.write("Search Jet A fuel prices on AirNav.")
 airport_input = st.text_input("Airport Codes Separated by Commas (ICT, FTY, KIXA):", "")
 
 if st.button("Fetch Prices", type="primary", use_container_width=True):
