@@ -14,8 +14,8 @@ st.set_page_config(
 )
 
 
-def fetch_eia_ulsd_spot_prices():
-    """Fetches NY Harbor ULSD spot prices from EIA and computes weekly averages."""
+def fetch_latest_full_week_eia():
+    """Fetches NY Harbor ULSD spot prices from EIA and returns only the last full week."""
     url = "https://www.eia.gov/dnav/pet/hist/eer_epd2dxl0_pf4_y35ny_dpgD.htm"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -24,11 +24,10 @@ def fetch_eia_ulsd_spot_prices():
     try:
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code != 200:
-            return pd.DataFrame()
+            return None
 
         soup = BeautifulSoup(res.content, "html.parser")
-        
-        # Locate the table containing the spot price data
+
         table = None
         for t in soup.find_all("table"):
             if "Week Of" in t.get_text():
@@ -36,9 +35,9 @@ def fetch_eia_ulsd_spot_prices():
                 break
 
         if not table:
-            return pd.DataFrame()
+            return None
 
-        rows = []
+        full_weeks = []
         for tr in table.find_all("tr"):
             cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
             if len(cells) >= 6 and "to" in cells[0]:
@@ -50,24 +49,24 @@ def fetch_eia_ulsd_spot_prices():
                     except ValueError:
                         daily_prices.append(None)
 
-                # Ensure 5 daily price columns
-                while len(daily_prices) < 5:
-                    daily_prices.append(None)
+                # Check if week has all 5 valid trading day prices
+                if len(daily_prices) == 5 and all(p is not None for p in daily_prices):
+                    weekly_avg = sum(daily_prices) / len(daily_prices)
+                    full_weeks.append({
+                        "Week Of": week_of,
+                        "Mon": daily_prices[0],
+                        "Tue": daily_prices[1],
+                        "Wed": daily_prices[2],
+                        "Thu": daily_prices[3],
+                        "Fri": daily_prices[4],
+                        "Weekly Average": weekly_avg
+                    })
 
-                # Compute average ignoring missing/holiday days
-                valid_prices = [p for p in daily_prices if p is not None]
-                weekly_avg = sum(valid_prices) / len(valid_prices) if valid_prices else None
-
-                rows.append([week_of] + daily_prices + [weekly_avg])
-
-        df = pd.DataFrame(
-            rows,
-            columns=["Week Of", "Mon", "Tue", "Wed", "Thu", "Fri", "Weekly Average"]
-        )
-        return df
+        # Return the last (most recent) complete week
+        return full_weeks[-1] if full_weeks else None
 
     except Exception:
-        return pd.DataFrame()
+        return None
 
 
 def parse_fbo_fuel_table(fuel_table):
@@ -119,7 +118,6 @@ def parse_fbo_fuel_table(fuel_table):
             if val and val != "N/A":
                 as_price = val
 
-    # Priority order: FS -> SS -> AS
     price = fs_price or ss_price or as_price
 
     table_text = fuel_table.get_text()
@@ -313,96 +311,93 @@ def scrape_airport_jeta(icao):
     return fbo_results
 
 
-# UI Layout
+# Main UI Layout
 st.title("✈️ Jet A Fuel Tracker")
 
-# Tab navigation for FBO Search and EIA ULSD Spot Prices
-tab1, tab2 = st.tabs(["AirNav Jet A Tracker", "NY Harbor ULSD Spot Prices"])
+# -------------------------------------------------------------
+# Display Last Full Previous Week EIA Spot Price Data on Main Page
+# -------------------------------------------------------------
+last_full_week = fetch_latest_full_week_eia()
 
-with tab1:
-    st.write("Search Jet A fuel prices on AirNav.")
-    airport_input = st.text_input("Airport Codes Separated by Commas (ICT, FTY, KIXA):", "")
-
-    if st.button("Fetch Prices", type="primary", use_container_width=True):
-        airports = [
-            code.strip().upper()
-            for code in airport_input.replace(";", ",").split(",")
-            if code.strip()
-        ]
-        all_data = []
-
-        progress_bar = st.progress(0)
-        for idx, icao in enumerate(airports):
-            st.caption(f"Fetching {icao}...")
-            results = scrape_airport_jeta(icao)
-            if results:
-                all_data.extend(results)
-            else:
-                all_data.append(
-                    {
-                        "Airport": icao,
-                        "FBO Name": "N/A or Error",
-                        "FBO Link": "",
-                        "Jet A Price": "N/A",
-                        "Price Updated": "N/A",
-                    }
-                )
-            progress_bar.progress((idx + 1) / len(airports))
-
-        if all_data:
-            df = pd.DataFrame(all_data)
-            st.subheader("Results")
-            st.dataframe(
-                df,
-                column_config={
-                    "FBO Link": st.column_config.LinkColumn(
-                        "FBO Link",
-                        display_text="View on AirNav",
-                    ),
-                },
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            csv = df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                label="📄 Export to CSV",
-                data=csv,
-                file_name=f"airnav_jeta_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-
-with tab2:
-    st.subheader("EIA NY Harbor ULSD Spot Prices")
-    st.write("Fetches historical weekly spot prices with a calculated weekly average column.")
+if last_full_week:
+    st.markdown(f"### ⛽ NY Harbor ULSD Spot Price — Previous Full Week ({last_full_week['Week Of']})")
     
-    if st.button("Fetch EIA Spot Data", use_container_width=True):
-        with st.spinner("Fetching EIA Spot Data..."):
-            eia_df = fetch_eia_ulsd_spot_prices()
-            
-        if not eia_df.empty:
-            st.dataframe(
-                eia_df,
-                column_config={
-                    "Weekly Average": st.column_config.NumberColumn(format="$%.4f"),
-                    "Mon": st.column_config.NumberColumn(format="$%.3f"),
-                    "Tue": st.column_config.NumberColumn(format="$%.3f"),
-                    "Wed": st.column_config.NumberColumn(format="$%.3f"),
-                    "Thu": st.column_config.NumberColumn(format="$%.3f"),
-                    "Fri": st.column_config.NumberColumn(format="$%.3f"),
-                },
-                use_container_width=True,
-                hide_index=True,
-            )
-            
-            eia_csv = eia_df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                label="📄 Export EIA Data to CSV",
-                data=eia_csv,
-                file_name=f"eia_ulsd_spot_prices_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.metric(
+            label="Weekly Average",
+            value=f"${last_full_week['Weekly Average']:.4f} / gal"
+        )
+    
+    with col2:
+        df_week = pd.DataFrame([last_full_week])
+        st.dataframe(
+            df_week,
+            column_config={
+                "Weekly Average": st.column_config.NumberColumn(format="$%.4f"),
+                "Mon": st.column_config.NumberColumn(format="$%.3f"),
+                "Tue": st.column_config.NumberColumn(format="$%.3f"),
+                "Wed": st.column_config.NumberColumn(format="$%.3f"),
+                "Thu": st.column_config.NumberColumn(format="$%.3f"),
+                "Fri": st.column_config.NumberColumn(format="$%.3f"),
+            },
+            use_container_width=True,
+            hide_index=True,
+        )
+    st.divider()
+
+# -------------------------------------------------------------
+# AirNav Jet A Search Interface
+# -------------------------------------------------------------
+st.write("Search Jet A fuel prices on AirNav.")
+airport_input = st.text_input("Airport Codes Separated by Commas (ICT, FTY, KIXA):", "")
+
+if st.button("Fetch Prices", type="primary", use_container_width=True):
+    airports = [
+        code.strip().upper()
+        for code in airport_input.replace(";", ",").split(",")
+        if code.strip()
+    ]
+    all_data = []
+
+    progress_bar = st.progress(0)
+    for idx, icao in enumerate(airports):
+        st.caption(f"Fetching {icao}...")
+        results = scrape_airport_jeta(icao)
+        if results:
+            all_data.extend(results)
         else:
-            st.error("Failed to fetch EIA spot price data.")
+            all_data.append(
+                {
+                    "Airport": icao,
+                    "FBO Name": "N/A or Error",
+                    "FBO Link": "",
+                    "Jet A Price": "N/A",
+                    "Price Updated": "N/A",
+                }
+            )
+        progress_bar.progress((idx + 1) / len(airports))
+
+    if all_data:
+        df = pd.DataFrame(all_data)
+        st.subheader("Results")
+        st.dataframe(
+            df,
+            column_config={
+                "FBO Link": st.column_config.LinkColumn(
+                    "FBO Link",
+                    display_text="View on AirNav",
+                ),
+            },
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📄 Export to CSV",
+            data=csv,
+            file_name=f"airnav_jeta_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
