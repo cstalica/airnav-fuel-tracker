@@ -9,7 +9,7 @@ import streamlit as st
 st.set_page_config(
     page_title="Jet A Fuel Tracker",
     page_icon="✈️",
-    layout="wide",  # Expands app to full width for a cleaner look
+    layout="wide",
     initial_sidebar_state="collapsed",
 )
 
@@ -352,7 +352,7 @@ if prev_week:
 
         st.dataframe(
             df_display,
-            use_container_width=True,
+            use_container_width=False,  # Auto-fits table to column content width
             hide_index=True,
         )
     st.divider()
@@ -365,7 +365,7 @@ airport_input = st.text_input(
     "Airport Codes Separated by Commas (ICT, FTY, KIXA):", ""
 )
 
-if st.button("Fetch Prices", type="primary", use_container_width=True):
+if st.button("Fetch Prices", type="primary", use_container_width=False):
     airports = [
         code.strip().upper()
         for code in airport_input.replace(";", ",").split(",")
@@ -402,7 +402,7 @@ if st.button("Fetch Prices", type="primary", use_container_width=True):
                     display_text="View on AirNav",
                 ),
             },
-            use_container_width=True,
+            use_container_width=False,  # Auto-fits table to column content width
             hide_index=True,
         )
 
@@ -412,5 +412,5 @@ if st.button("Fetch Prices", type="primary", use_container_width=True):
             data=csv,
             file_name=f"airnav_jeta_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv",
-            use_container_width=True,
+            use_container_width=False,
         )
