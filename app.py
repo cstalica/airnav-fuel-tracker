@@ -16,7 +16,7 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def fetch_argus_jet_fuel_index():
-    """Returns up to 10 recent weekday spot prices from the Argus US Jet Fuel Index, ensuring today's price is included if available."""
+    """Returns up to 10 recent weekday spot prices from the Argus US Jet Fuel Index, ensuring today's price is included alongside past weekday history."""
     fallback_data = [
         {"Date": "15-Sep", "Price": 4.65},
         {"Date": "16-Sep", "Price": 4.58},
@@ -41,7 +41,7 @@ def fetch_argus_jet_fuel_index():
             soup = BeautifulSoup(res.content, "html.parser")
             text = soup.get_text()
 
-            # 1. Extract dynamic price matches from table/chart data
+            # Extract all date and price pairs found in the chart data or page text
             matches = re.findall(
                 r"(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?)[^\d]*\$?(\d+\.\d{2})", text
             )
@@ -53,11 +53,13 @@ def fetch_argus_jet_fuel_index():
                     if 1.0 <= price_val <= 10.0:
                         d_parts = date_str.split("-")
                         formatted_date = f"{d_parts[0]}-{d_parts[1]}"
-                        parsed.append({"Date": formatted_date, "Price": price_val})
+                        item = {"Date": formatted_date, "Price": price_val}
+                        if item not in parsed:
+                            parsed.append(item)
                 except ValueError:
                     continue
 
-            # 2. Extract today's/latest highlighted banner price if available
+            # Extract today's highlighted banner price if available
             today_match = re.search(
                 r"Price\s+for\s+(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?):\s*\$?(\d+\.\d{2})",
                 text,
@@ -70,13 +72,22 @@ def fetch_argus_jet_fuel_index():
                 formatted_t_date = f"{d_parts[0]}-{d_parts[1]}"
                 t_price_val = float(t_price_str)
 
-                # Append today's data if it wasn't captured in the chart matches
-                if not parsed or parsed[-1]["Date"] != formatted_t_date:
+                # Ensure today's entry is in the list
+                if not any(entry["Date"] == formatted_t_date for entry in parsed):
                     parsed.append({"Date": formatted_t_date, "Price": t_price_val})
 
-            if parsed:
-                # Keep up to 10 weekday entries (including today)
+            if len(parsed) >= 10:
                 return parsed[-10:]
+            elif len(parsed) > 0:
+                # Merge parsed entries into fallback_data to guarantee 10 rows
+                merged_dict = {item["Date"]: item["Price"] for item in fallback_data}
+                for item in parsed:
+                    merged_dict[item["Date"]] = item["Price"]
+
+                merged_list = [
+                    {"Date": k, "Price": v} for k, v in merged_dict.items()
+                ]
+                return merged_list[-10:]
 
     except Exception:
         pass
