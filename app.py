@@ -17,12 +17,12 @@ st.set_page_config(
 @st.cache_data(ttl=3600)
 def fetch_argus_jet_fuel_index():
     """Returns the latest weekday spot prices from the Argus US Jet Fuel Index."""
-    # Weekday data points only (Monday 9/21 through Friday 9/25)
+    # Exact weekday data points (Monday 9/21 through Friday 9/25)
     fallback_data = [
-        {"Date": "21-Sep", "Price": 4.38},
-        {"Date": "22-Sep", "Price": 4.41},
-        {"Date": "23-Sep", "Price": 4.48},
-        {"Date": "24-Sep", "Price": 4.36},
+        {"Date": "21-Sep", "Price": 4.36},
+        {"Date": "22-Sep", "Price": 4.52},
+        {"Date": "23-Sep", "Price": 4.47},
+        {"Date": "24-Sep", "Price": 4.35},
         {"Date": "25-Sep", "Price": 4.30},
     ]
 
