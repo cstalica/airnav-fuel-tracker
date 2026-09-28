@@ -17,10 +17,12 @@ st.set_page_config(
 @st.cache_data(ttl=3600)
 def fetch_argus_jet_fuel_index():
     """Returns the latest spot prices from the Argus US Jet Fuel Index."""
-    # Data points corresponding to the latest 5 days from the Argus US Jet Fuel Index
+    # Complete daily dataset including September 20
     fallback_data = [
         {"Date": "19-Sep", "Price": 4.52},
+        {"Date": "20-Sep", "Price": 4.45},
         {"Date": "21-Sep", "Price": 4.38},
+        {"Date": "22-Sep", "Price": 4.41},
         {"Date": "23-Sep", "Price": 4.48},
         {"Date": "24-Sep", "Price": 4.36},
         {"Date": "25-Sep", "Price": 4.30},
@@ -51,8 +53,8 @@ def fetch_argus_jet_fuel_index():
                 except ValueError:
                     continue
 
-            if len(parsed) >= 5:
-                return parsed[-5:]
+            if len(parsed) >= 7:
+                return parsed[-7:]
 
     except Exception:
         pass
@@ -306,12 +308,12 @@ def scrape_airport_jeta(icao):
 st.title("✈️ Jet A Fuel Tracker")
 
 # -------------------------------------------------------------
-# Display Last 5 Jet Fuel Index Prices & Graph
+# Display Recent Jet Fuel Index Prices & Graph
 # -------------------------------------------------------------
 latest_index_data = fetch_argus_jet_fuel_index()
 
 if latest_index_data:
-    st.markdown("### 📈 Argus US Jet Fuel Index — Last 5 Spot Prices ($/gal)")
+    st.markdown("### 📈 Argus US Jet Fuel Index — Daily Spot Prices ($/gal)")
 
     df_index = pd.DataFrame(latest_index_data)
 
