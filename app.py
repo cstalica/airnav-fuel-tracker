@@ -392,10 +392,17 @@ if latest_index_data:
         color="#1f77b4", size=60, filled=True
     )
 
-    # Price labels text layer above points
+    # Price labels text layer formatted explicitly in white
     text_layer = base.mark_text(
-        align="center", baseline="bottom", dy=-10, fontSize=12, fontWeight="bold"
-    ).encode(text="Price_Label:N")
+        align="center",
+        baseline="bottom",
+        dy=-10,
+        fontSize=12,
+        fontWeight="bold",
+    ).encode(
+        text="Price_Label:N",
+        color=alt.value("white"),
+    )
 
     # Combine layers into chart
     chart = (
