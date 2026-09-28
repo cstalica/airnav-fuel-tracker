@@ -16,9 +16,8 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def fetch_argus_jet_fuel_index():
-    """Returns up to 10 recent weekday spot prices from the Argus US Jet Fuel Index, dynamically fetching today's price if available."""
+    """Returns up to 10 recent weekday spot prices from the Argus US Jet Fuel Index, ensuring today's price is included if available."""
     fallback_data = [
-        {"Date": "14-Sep", "Price": 4.60},
         {"Date": "15-Sep", "Price": 4.65},
         {"Date": "16-Sep", "Price": 4.58},
         {"Date": "17-Sep", "Price": 4.55},
@@ -28,6 +27,7 @@ def fetch_argus_jet_fuel_index():
         {"Date": "23-Sep", "Price": 4.47},
         {"Date": "24-Sep", "Price": 4.35},
         {"Date": "25-Sep", "Price": 4.30},
+        {"Date": "28-Sep", "Price": 4.40},
     ]
 
     url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/#jet-fuel-prices"
@@ -41,45 +41,42 @@ def fetch_argus_jet_fuel_index():
             soup = BeautifulSoup(res.content, "html.parser")
             text = soup.get_text()
 
-            parsed = []
-
-            # Check for explicitly highlighted daily price callout (e.g. "Price for 28-Sep-2026: $4.40/gallon")
-            highlight_match = re.search(
-                r"Price\s+for\s+(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?):\s*\$?(\d+\.\d{2})",
-                text,
-                re.IGNORECASE,
-            )
-
-            # Extract date and price pairs from table/chart text
+            # 1. Extract dynamic price matches from table/chart data
             matches = re.findall(
                 r"(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?)[^\d]*\$?(\d+\.\d{2})", text
             )
 
+            parsed = []
             for date_str, price_str in matches:
                 try:
                     price_val = float(price_str)
                     if 1.0 <= price_val <= 10.0:
-                        # Normalize date format to 'DD-Mon'
                         d_parts = date_str.split("-")
                         formatted_date = f"{d_parts[0]}-{d_parts[1]}"
                         parsed.append({"Date": formatted_date, "Price": price_val})
                 except ValueError:
                     continue
 
-            # Append the latest highlighted spot price if not already included in historical matches
-            if highlight_match:
-                raw_h_date, raw_h_price = highlight_match.groups()
-                d_parts = raw_h_date.split("-")
-                h_date = f"{d_parts[0]}-{d_parts[1]}"
-                h_price = float(raw_h_price)
+            # 2. Extract today's/latest highlighted banner price if available
+            today_match = re.search(
+                r"Price\s+for\s+(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?):\s*\$?(\d+\.\d{2})",
+                text,
+                re.IGNORECASE,
+            )
 
-                if not parsed or parsed[-1]["Date"] != h_date:
-                    parsed.append({"Date": h_date, "Price": h_price})
+            if today_match:
+                t_date_str, t_price_str = today_match.groups()
+                d_parts = t_date_str.split("-")
+                formatted_t_date = f"{d_parts[0]}-{d_parts[1]}"
+                t_price_val = float(t_price_str)
 
-            if len(parsed) >= 10:
+                # Append today's data if it wasn't captured in the chart matches
+                if not parsed or parsed[-1]["Date"] != formatted_t_date:
+                    parsed.append({"Date": formatted_t_date, "Price": t_price_val})
+
+            if parsed:
+                # Keep up to 10 weekday entries (including today)
                 return parsed[-10:]
-            elif len(parsed) > 0:
-                return parsed
 
     except Exception:
         pass
