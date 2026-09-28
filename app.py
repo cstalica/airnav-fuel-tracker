@@ -354,16 +354,6 @@ if latest_index_data:
 
     df_index = pd.DataFrame(latest_index_data)
 
-    latest_price = df_index.iloc[-1]["Price"]
-    prev_price = df_index.iloc[-2]["Price"] if len(df_index) > 1 else latest_price
-    price_delta = round(latest_price - prev_price, 2)
-
-    st.metric(
-        label=f"Latest Spot Price ({df_index.iloc[-1]['Date']})",
-        value=f"${latest_price:.2f}",
-        delta=f"{price_delta:+.2f}",
-    )
-
     # Format price labels for point annotations
     df_index["Price_Label"] = df_index["Price"].apply(lambda x: f"${x:.2f}")
 
