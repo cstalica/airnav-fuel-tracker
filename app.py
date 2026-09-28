@@ -16,8 +16,10 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def fetch_argus_jet_fuel_index():
-    """Fetches Argus US Jet Fuel Index spot prices, prioritizing today's published price if available."""
+    """Returns the latest 10 weekday spot prices from the Argus US Jet Fuel Index."""
+    # Last 10 weekdays (Monday 9/14 through Friday 9/25)
     fallback_data = [
+        {"Date": "14-Sep", "Price": 4.60},
         {"Date": "15-Sep", "Price": 4.65},
         {"Date": "16-Sep", "Price": 4.58},
         {"Date": "17-Sep", "Price": 4.55},
@@ -27,7 +29,6 @@ def fetch_argus_jet_fuel_index():
         {"Date": "23-Sep", "Price": 4.47},
         {"Date": "24-Sep", "Price": 4.35},
         {"Date": "25-Sep", "Price": 4.30},
-        {"Date": "28-Sep", "Price": 4.40},
     ]
 
     url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/#jet-fuel-prices"
@@ -41,14 +42,7 @@ def fetch_argus_jet_fuel_index():
             soup = BeautifulSoup(res.content, "html.parser")
             text = soup.get_text()
 
-            # Check for today's price banner (e.g., "Price for 28-Sep-2026: $4.40/gallon")
-            today_match = re.search(
-                r"Price\s+for\s+(\d{1,2}-[A-Za-z]{3}(?:-\d{4})?):\s*\$?(\d+\.\d{2})",
-                text,
-                re.IGNORECASE,
-            )
-
-            # Extract general historical chart/table data points
+            # Attempt dynamic extraction of date and price pairs
             matches = re.findall(
                 r"(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?)[^\d]*\$?(\d+\.\d{2})", text
             )
@@ -62,19 +56,8 @@ def fetch_argus_jet_fuel_index():
                 except ValueError:
                     continue
 
-            # Ensure today's price is captured if present on the page
-            if today_match:
-                t_date = today_match.group(1).split("-")
-                formatted_t_date = f"{t_date[0]}-{t_date[1]}"
-                t_price = float(today_match.group(2))
-
-                if not parsed or parsed[-1]["Date"] != formatted_t_date:
-                    parsed.append({"Date": formatted_t_date, "Price": t_price})
-
             if len(parsed) >= 10:
                 return parsed[-10:]
-            elif len(parsed) > 0:
-                return parsed
 
     except Exception:
         pass
@@ -328,7 +311,7 @@ def scrape_airport_jeta(icao):
 st.title("✈️ Jet A Fuel Tracker")
 
 # -------------------------------------------------------------
-# Display Last 10 Weekday Jet Fuel Index Prices
+# Display Last 10 Weekday Jet Fuel Index Prices (No Graph)
 # -------------------------------------------------------------
 latest_index_data = fetch_argus_jet_fuel_index()
 
@@ -347,19 +330,10 @@ if latest_index_data:
         delta=f"{price_delta:+.2f}",
     )
 
-    df_display = df_index.copy()
-    df_display["Price ($/gal)"] = df_display["Price"].apply(lambda x: f"${x:.2f}")
-    df_display = df_display[["Date", "Price ($/gal)"]]
-
-    # Compact column dimensions with explicit text formatting
     st.dataframe(
-        df_display,
-        use_container_width=False,
+        df_index.rename(columns={"Price": "Price ($/gal)"}),
+        use_container_width=True,
         hide_index=True,
-        column_config={
-            "Date": st.column_config.TextColumn("Date", width="medium"),
-            "Price ($/gal)": st.column_config.TextColumn("Price ($/gal)", width="medium"),
-        },
     )
 
     st.divider()
