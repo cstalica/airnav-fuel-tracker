@@ -16,10 +16,10 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def fetch_argus_jet_fuel_index():
-    """Fetches the latest daily Jet Fuel Spot Prices from Airlines for America."""
-    url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/"
+    """Scrapes the latest daily Jet Fuel Spot Prices from Airlines for America."""
+    url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/#jet-fuel-prices"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
     try:
@@ -28,28 +28,37 @@ def fetch_argus_jet_fuel_index():
             return None
 
         soup = BeautifulSoup(res.content, "html.parser")
-        text = soup.get_text()
+        
+        # 1. Look for structured table rows containing dates and prices
+        data = []
+        for tr in soup.find_all("tr"):
+            tds = tr.find_all("td")
+            if len(tds) >= 2:
+                date_text = tds[0].get_text(strip=True)
+                price_text = tds[1].get_text(strip=True)
+                
+                # Check for date pattern (e.g., 25-Sep or 25-Sep-2026) and price pattern
+                price_match = re.search(r"(\d+\.\d{2})", price_text)
+                if price_match:
+                    try:
+                        price_val = float(price_match.group(1))
+                        data.append({"Date": date_text, "Price": price_val})
+                    except ValueError:
+                        continue
 
-        # Extract dates and prices from the page text
-        # Matches patterns like '25-Sep' followed by prices like '$4.30'
-        dates = re.findall(r"\b(\d{2}-[A-Za-z]{3})\b", text)
-        prices = re.findall(r"\$(\d+\.\d{2})", text)
+        # 2. Fallback: Parse Highcharts or chart JS script tags if table isn't present
+        if not data:
+            for script in soup.find_all("script"):
+                script_text = script.string or ""
+                if "series" in script_text or "data" in script_text:
+                    # Extracts paired data structures like ['25-Sep', 4.30] or {name: '25-Sep', y: 4.30}
+                    matches = re.findall(r"['\"](\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?)['\"],\s*(\d+\.\d{2})", script_text)
+                    for d, p in matches:
+                        data.append({"Date": d, "Price": float(p)})
 
-        if dates and prices:
-            # Pair dates with prices starting from the recent index entries
-            min_len = min(len(dates), len(prices))
-            parsed_data = []
-            for i in range(min_len):
-                try:
-                    price_val = float(prices[i])
-                    parsed_data.append({"Date": dates[i], "Price": price_val})
-                except ValueError:
-                    continue
-
-            # Return the last 5 data points
-            if len(parsed_data) >= 5:
-                return parsed_data[-5:]
-            return parsed_data
+        if data:
+            # Return strictly the last 5 records
+            return data[-5:]
 
         return None
     except Exception:
