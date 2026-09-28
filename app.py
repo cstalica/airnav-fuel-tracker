@@ -116,6 +116,14 @@ def parse_fbo_fuel_table(fuel_table):
 
     price = fs_price or ss_price or as_price
 
+    if price:
+        try:
+            # Clean non-numeric characters (like '$') and format to two decimal places
+            clean_val = re.sub(r"[^\d.]", "", price)
+            price = f"${float(clean_val):.2f}"
+        except ValueError:
+            pass
+
     table_text = fuel_table.get_text()
     date_match = re.search(
         r"Updated\s+(\d{1,2}-[A-Za-z]{3}-\d{4})", table_text, re.IGNORECASE
@@ -330,8 +338,11 @@ if latest_index_data:
         delta=f"{price_delta:+.2f}",
     )
 
+    df_display = df_index.copy()
+    df_display["Price ($/gal)"] = df_display["Price"].apply(lambda x: f"${x:.2f}")
+
     st.dataframe(
-        df_index.rename(columns={"Price": "Price ($/gal)"}),
+        df_display[["Date", "Price ($/gal)"]],
         use_container_width=True,
         hide_index=True,
     )
