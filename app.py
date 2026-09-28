@@ -1,5 +1,6 @@
 from datetime import datetime
 import re
+import altair as alt
 import pandas as pd
 from bs4 import BeautifulSoup
 import requests
@@ -41,7 +42,6 @@ def fetch_argus_jet_fuel_index():
             soup = BeautifulSoup(res.content, "html.parser")
             text = soup.get_text()
 
-            # Extract all date and price pairs found in the chart data or page text
             matches = re.findall(
                 r"(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?)[^\d]*\$?(\d+\.\d{2})", text
             )
@@ -59,7 +59,6 @@ def fetch_argus_jet_fuel_index():
                 except ValueError:
                     continue
 
-            # Extract today's highlighted banner price if available
             today_match = re.search(
                 r"Price\s+for\s+(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?):\s*\$?(\d+\.\d{2})",
                 text,
@@ -72,14 +71,12 @@ def fetch_argus_jet_fuel_index():
                 formatted_t_date = f"{d_parts[0]}-{d_parts[1]}"
                 t_price_val = float(t_price_str)
 
-                # Ensure today's entry is in the list
                 if not any(entry["Date"] == formatted_t_date for entry in parsed):
                     parsed.append({"Date": formatted_t_date, "Price": t_price_val})
 
             if len(parsed) >= 10:
                 return parsed[-10:]
             elif len(parsed) > 0:
-                # Merge parsed entries into fallback_data to guarantee 10 rows
                 merged_dict = {item["Date"]: item["Price"] for item in fallback_data}
                 for item in parsed:
                     merged_dict[item["Date"]] = item["Price"]
@@ -348,7 +345,7 @@ def scrape_airport_jeta(icao):
 st.title("✈️ Jet A Fuel Tracker")
 
 # -------------------------------------------------------------
-# Display Last 10 Weekday Jet Fuel Index Prices (No Graph)
+# Display Last 10 Weekday Jet Fuel Index Prices as Graph
 # -------------------------------------------------------------
 latest_index_data = fetch_argus_jet_fuel_index()
 
@@ -367,14 +364,47 @@ if latest_index_data:
         delta=f"{price_delta:+.2f}",
     )
 
-    df_display = df_index.copy()
-    df_display["Price ($/gal)"] = df_display["Price"].apply(lambda x: f"${x:.2f}")
+    # Format price labels for point annotations
+    df_index["Price_Label"] = df_index["Price"].apply(lambda x: f"${x:.2f}")
 
-    st.dataframe(
-        df_display[["Date", "Price ($/gal)"]],
-        use_container_width=True,
-        hide_index=True,
+    # Calculate autoscaled Y-axis bounds with padding
+    min_price = df_index["Price"].min()
+    max_price = df_index["Price"].max()
+    padding = max(0.05, (max_price - min_price) * 0.25)
+    y_min = round(min_price - padding, 2)
+    y_max = round(max_price + padding, 2)
+
+    # Base chart setup with explicit date ordering
+    base = alt.Chart(df_index).encode(
+        x=alt.X("Date:N", sort=None, title="Date"),
+        y=alt.Y(
+            "Price:Q",
+            scale=alt.Scale(domain=[y_min, y_max]),
+            title="Price ($/gal)",
+        ),
     )
+
+    # Line layer
+    line_layer = base.mark_line(color="#1f77b4", strokeWidth=3)
+
+    # Point markers layer
+    point_layer = base.mark_point(
+        color="#1f77b4", size=60, filled=True
+    )
+
+    # Price labels text layer above points
+    text_layer = base.mark_text(
+        align="center", baseline="bottom", dy=-10, fontSize=12, fontWeight="bold"
+    ).encode(text="Price_Label:N")
+
+    # Combine layers into chart
+    chart = (
+        (line_layer + point_layer + text_layer)
+        .properties(height=350)
+        .configure_axis(grid=True)
+    )
+
+    st.altair_chart(chart, use_container_width=True)
 
     st.divider()
 
