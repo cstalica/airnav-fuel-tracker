@@ -16,9 +16,14 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def fetch_argus_jet_fuel_index():
-    """Fetches Argus US Jet Fuel Index spot prices, prioritizing today's scraped data."""
+    """Fetches Argus US Jet Fuel Index spot prices, filtering for the last 10 weekdays."""
+    url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/#jet-fuel-prices"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    # Standard fallback of 10 consecutive weekdays ending on 28-Sep-2026
     fallback_data = [
-        {"Date": "14-Sep", "Price": 4.60},
         {"Date": "15-Sep", "Price": 4.65},
         {"Date": "16-Sep", "Price": 4.58},
         {"Date": "17-Sep", "Price": 4.55},
@@ -28,12 +33,8 @@ def fetch_argus_jet_fuel_index():
         {"Date": "23-Sep", "Price": 4.47},
         {"Date": "24-Sep", "Price": 4.35},
         {"Date": "25-Sep", "Price": 4.30},
+        {"Date": "28-Sep", "Price": 4.40},
     ]
-
-    url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/#jet-fuel-prices"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
 
     try:
         res = requests.get(url, headers=headers, timeout=10)
@@ -41,35 +42,55 @@ def fetch_argus_jet_fuel_index():
             soup = BeautifulSoup(res.content, "html.parser")
             text = soup.get_text()
 
-            # First, check if today's prominent price banner is published (e.g., "Price for 28-Sep-2026: $4.40/gallon")
+            # Find all date-price patterns across text (e.g., 28-Sep or 28-Sep-2026 and $4.40)
+            matches = re.findall(
+                r"(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?)[^\d]*\$?(\d+\.\d{2})", text
+            )
+
+            parsed = []
+            current_year = datetime.now().year
+
+            for date_str, price_str in matches:
+                try:
+                    price_val = float(price_str)
+                    if not (1.0 <= price_val <= 10.0):
+                        continue
+
+                    # Parse date to filter out weekends
+                    clean_date_str = date_str.split("-")[0] + "-" + date_str.split("-")[1]
+                    try:
+                        parsed_dt = datetime.strptime(f"{clean_date_str}-{current_year}", "%d-%b-%Y")
+                    except ValueError:
+                        parsed_dt = datetime.strptime(clean_date_str, "%d-%b")
+
+                    # Monday = 0, Sunday = 6; keep Monday (0) through Friday (4)
+                    if parsed_dt.weekday() < 5:
+                        parsed.append({"Date": clean_date_str, "Price": price_val})
+
+                except ValueError:
+                    continue
+
+            # Check for today's prominent headline price if present (e.g. Price for 28-Sep-2026: $4.40/gallon)
             today_match = re.search(
                 r"Price\s+for\s+(\d{1,2}-[A-Za-z]{3}(?:-\d{4})?):\s*\$?(\d+\.\d{2})",
                 text,
                 re.IGNORECASE,
             )
 
-            # Extract full historical table points
-            matches = re.findall(
-                r"(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?)[^\d]*\$?(\d+\.\d{2})", text
-            )
-
-            parsed = []
-            for date_str, price_str in matches:
-                try:
-                    price_val = float(price_str)
-                    if 1.0 <= price_val <= 10.0:
-                        parsed.append({"Date": date_str, "Price": price_val})
-                except ValueError:
-                    continue
-
-            # Append today's price if found and not already the last item in parsed
             if today_match:
-                t_date = today_match.group(1).split("-")
-                formatted_t_date = f"{t_date[0]}-{t_date[1]}"
+                raw_t_date = today_match.group(1)
+                t_parts = raw_t_date.split("-")
+                formatted_t_date = f"{t_parts[0]}-{t_parts[1]}"
                 t_price = float(today_match.group(2))
 
-                if not parsed or parsed[-1]["Date"] != formatted_t_date:
-                    parsed.append({"Date": formatted_t_date, "Price": t_price})
+                try:
+                    t_dt = datetime.strptime(f"{formatted_t_date}-{current_year}", "%d-%b-%Y")
+                    # Append if today is a weekday and not already at the end of the list
+                    if t_dt.weekday() < 5:
+                        if not parsed or parsed[-1]["Date"] != formatted_t_date:
+                            parsed.append({"Date": formatted_t_date, "Price": t_price})
+                except ValueError:
+                    pass
 
             if len(parsed) >= 10:
                 return parsed[-10:]
@@ -328,7 +349,7 @@ def scrape_airport_jeta(icao):
 st.title("✈️ Jet A Fuel Tracker")
 
 # -------------------------------------------------------------
-# Display Last 10 Weekday Jet Fuel Index Prices (Dynamic Check + Fixed Formatting)
+# Display Last 10 Weekday Jet Fuel Index Prices
 # -------------------------------------------------------------
 latest_index_data = fetch_argus_jet_fuel_index()
 
@@ -347,12 +368,10 @@ if latest_index_data:
         delta=f"{price_delta:+.2f}",
     )
 
-    # Format prices explicitly to two decimal places
     df_display = df_index.copy()
     df_display["Price ($/gal)"] = df_display["Price"].apply(lambda x: f"${x:.2f}")
     df_display = df_display[["Date", "Price ($/gal)"]]
 
-    # Display dataframe with optimized column width configuration
     st.dataframe(
         df_display,
         use_container_width=False,
