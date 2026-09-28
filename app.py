@@ -16,8 +16,7 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def fetch_argus_jet_fuel_index():
-    """Returns the latest 10 weekday spot prices from the Argus US Jet Fuel Index."""
-    # Last 10 weekdays (Monday 9/14 through Friday 9/25)
+    """Returns up to 10 recent weekday spot prices from the Argus US Jet Fuel Index, dynamically fetching today's price if available."""
     fallback_data = [
         {"Date": "14-Sep", "Price": 4.60},
         {"Date": "15-Sep", "Price": 4.65},
@@ -42,22 +41,45 @@ def fetch_argus_jet_fuel_index():
             soup = BeautifulSoup(res.content, "html.parser")
             text = soup.get_text()
 
-            # Attempt dynamic extraction of date and price pairs
+            parsed = []
+
+            # Check for explicitly highlighted daily price callout (e.g. "Price for 28-Sep-2026: $4.40/gallon")
+            highlight_match = re.search(
+                r"Price\s+for\s+(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?):\s*\$?(\d+\.\d{2})",
+                text,
+                re.IGNORECASE,
+            )
+
+            # Extract date and price pairs from table/chart text
             matches = re.findall(
                 r"(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?)[^\d]*\$?(\d+\.\d{2})", text
             )
 
-            parsed = []
             for date_str, price_str in matches:
                 try:
                     price_val = float(price_str)
                     if 1.0 <= price_val <= 10.0:
-                        parsed.append({"Date": date_str, "Price": price_val})
+                        # Normalize date format to 'DD-Mon'
+                        d_parts = date_str.split("-")
+                        formatted_date = f"{d_parts[0]}-{d_parts[1]}"
+                        parsed.append({"Date": formatted_date, "Price": price_val})
                 except ValueError:
                     continue
 
+            # Append the latest highlighted spot price if not already included in historical matches
+            if highlight_match:
+                raw_h_date, raw_h_price = highlight_match.groups()
+                d_parts = raw_h_date.split("-")
+                h_date = f"{d_parts[0]}-{d_parts[1]}"
+                h_price = float(raw_h_price)
+
+                if not parsed or parsed[-1]["Date"] != h_date:
+                    parsed.append({"Date": h_date, "Price": h_price})
+
             if len(parsed) >= 10:
                 return parsed[-10:]
+            elif len(parsed) > 0:
+                return parsed
 
     except Exception:
         pass
@@ -118,7 +140,6 @@ def parse_fbo_fuel_table(fuel_table):
 
     if price:
         try:
-            # Clean non-numeric characters (like '$') and format to two decimal places
             clean_val = re.sub(r"[^\d.]", "", price)
             price = f"${float(clean_val):.2f}"
         except ValueError:
