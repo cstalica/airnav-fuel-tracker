@@ -9,75 +9,9 @@ import streamlit as st
 st.set_page_config(
     page_title="Jet A Fuel Tracker",
     page_icon="✈️",
-    layout="centered",  # Reverted back to centered view
+    layout="centered",
     initial_sidebar_state="collapsed",
 )
-
-
-@st.cache_data(ttl=3600)  # Caches the EIA fetch so it doesn't re-run on button clicks
-def fetch_eia_previous_week():
-    """Fetches NY Harbor ULSD spot prices from EIA and returns the second to last row in the table."""
-    url = "https://www.eia.gov/dnav/pet/hist/eer_epd2dxl0_pf4_y35ny_dpgD.htm"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code != 200:
-            return None
-
-        soup = BeautifulSoup(res.content, "html.parser")
-
-        table = None
-        for t in soup.find_all("table"):
-            if "Week Of" in t.get_text():
-                table = t
-                break
-
-        if not table:
-            return None
-
-        recent_weeks = []
-        for tr in table.find_all("tr"):
-            cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
-            if len(cells) >= 6 and "to" in cells[0]:
-                week_of = cells[0]
-                daily_prices = []
-                for val in cells[1:6]:
-                    try:
-                        daily_prices.append(float(val))
-                    except ValueError:
-                        daily_prices.append(None)
-
-                # Filter valid reported daily prices
-                valid_prices = [p for p in daily_prices if p is not None]
-
-                if valid_prices:
-                    weekly_avg = sum(valid_prices) / len(valid_prices)
-
-                    fmt = lambda val: (
-                        f"{val:.2f}" if isinstance(val, (int, float)) else "N/A"
-                    )
-
-                    recent_weeks.append({
-                        "Week Of": week_of,
-                        "Mon": fmt(daily_prices[0]),
-                        "Tue": fmt(daily_prices[1]),
-                        "Wed": fmt(daily_prices[2]),
-                        "Thu": fmt(daily_prices[3]),
-                        "Fri": fmt(daily_prices[4]),
-                        "Weekly Average": weekly_avg,
-                        "Weekly Average Fmt": f"${weekly_avg:.2f} / gal",
-                    })
-
-        # Return the second-to-last row from the bottom of the table
-        if len(recent_weeks) >= 2:
-            return recent_weeks[-2]
-        return recent_weeks[-1] if recent_weeks else None
-
-    except Exception:
-        return None
 
 
 def parse_fbo_fuel_table(fuel_table):
@@ -324,38 +258,6 @@ def scrape_airport_jeta(icao):
 
 # Main UI Layout
 st.title("✈️ Jet A Fuel Tracker")
-
-# -------------------------------------------------------------
-# Display Second-to-Last Row (Cached EIA Previous Full Week)
-# -------------------------------------------------------------
-prev_week = fetch_eia_previous_week()
-
-if prev_week:
-    st.markdown(
-        f"### ⛽ NY Harbor ULSD Spot Price — Previous Week ({prev_week['Week Of']})"
-    )
-
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        st.metric(label="Weekly Average", value=prev_week["Weekly Average Fmt"])
-
-    with col2:
-        df_display = pd.DataFrame([{
-            "Week Of": prev_week["Week Of"],
-            "Mon": prev_week["Mon"],
-            "Tue": prev_week["Tue"],
-            "Wed": prev_week["Wed"],
-            "Thu": prev_week["Thu"],
-            "Fri": prev_week["Fri"],
-            "Weekly Average": f"{prev_week['Weekly Average']:.2f}",
-        }])
-
-        st.dataframe(
-            df_display,
-            use_container_width=False,
-            hide_index=True,
-        )
-    st.divider()
 
 # -------------------------------------------------------------
 # AirNav Jet A Search Interface
