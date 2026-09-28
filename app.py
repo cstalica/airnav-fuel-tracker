@@ -14,6 +14,48 @@ st.set_page_config(
 )
 
 
+@st.cache_data(ttl=3600)
+def fetch_argus_jet_fuel_index():
+    """Fetches the latest daily Jet Fuel Spot Prices from Airlines for America."""
+    url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code != 200:
+            return None
+
+        soup = BeautifulSoup(res.content, "html.parser")
+        text = soup.get_text()
+
+        # Extract dates and prices from the page text
+        # Matches patterns like '25-Sep' followed by prices like '$4.30'
+        dates = re.findall(r"\b(\d{2}-[A-Za-z]{3})\b", text)
+        prices = re.findall(r"\$(\d+\.\d{2})", text)
+
+        if dates and prices:
+            # Pair dates with prices starting from the recent index entries
+            min_len = min(len(dates), len(prices))
+            parsed_data = []
+            for i in range(min_len):
+                try:
+                    price_val = float(prices[i])
+                    parsed_data.append({"Date": dates[i], "Price": price_val})
+                except ValueError:
+                    continue
+
+            # Return the last 5 data points
+            if len(parsed_data) >= 5:
+                return parsed_data[-5:]
+            return parsed_data
+
+        return None
+    except Exception:
+        return None
+
+
 def parse_fbo_fuel_table(fuel_table):
     headers = []
     for tr in fuel_table.find_all("tr"):
@@ -258,6 +300,41 @@ def scrape_airport_jeta(icao):
 
 # Main UI Layout
 st.title("✈️ Jet A Fuel Tracker")
+
+# -------------------------------------------------------------
+# Display Last 5 Jet Fuel Index Prices & Graph
+# -------------------------------------------------------------
+latest_index_data = fetch_argus_jet_fuel_index()
+
+if latest_index_data:
+    st.markdown("### 📈 Argus US Jet Fuel Index — Last 5 Spot Prices ($/gal)")
+
+    df_index = pd.DataFrame(latest_index_data)
+
+    latest_price = df_index.iloc[-1]["Price"]
+    prev_price = df_index.iloc[-2]["Price"] if len(df_index) > 1 else latest_price
+    price_delta = round(latest_price - prev_price, 2)
+
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.metric(
+            label=f"Latest Spot Price ({df_index.iloc[-1]['Date']})",
+            value=f"${latest_price:.2f}",
+            delta=f"{price_delta:+.2f}",
+        )
+        st.dataframe(
+            df_index.rename(columns={"Price": "Price ($/gal)"}),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    with col2:
+        st.line_chart(
+            df_index.set_index("Date")["Price"],
+            use_container_width=True,
+        )
+
+    st.divider()
 
 # -------------------------------------------------------------
 # AirNav Jet A Search Interface
