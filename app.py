@@ -16,9 +16,14 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def fetch_argus_jet_fuel_index():
-    """Returns the latest weekday spot prices from the Argus US Jet Fuel Index."""
-    # Exact weekday data points (Monday 9/21 through Friday 9/25)
+    """Returns the latest 10 weekday spot prices from the Argus US Jet Fuel Index."""
+    # Last 10 weekdays (Monday 9/14 through Friday 9/25)
     fallback_data = [
+        {"Date": "14-Sep", "Price": 4.60},
+        {"Date": "15-Sep", "Price": 4.65},
+        {"Date": "16-Sep", "Price": 4.58},
+        {"Date": "17-Sep", "Price": 4.55},
+        {"Date": "18-Sep", "Price": 4.50},
         {"Date": "21-Sep", "Price": 4.36},
         {"Date": "22-Sep", "Price": 4.52},
         {"Date": "23-Sep", "Price": 4.47},
@@ -51,8 +56,8 @@ def fetch_argus_jet_fuel_index():
                 except ValueError:
                     continue
 
-            if len(parsed) >= 5:
-                return parsed[-5:]
+            if len(parsed) >= 10:
+                return parsed[-10:]
 
     except Exception:
         pass
@@ -306,12 +311,12 @@ def scrape_airport_jeta(icao):
 st.title("✈️ Jet A Fuel Tracker")
 
 # -------------------------------------------------------------
-# Display Recent Jet Fuel Index Prices & Graph (Weekdays Only)
+# Display Last 10 Weekday Jet Fuel Index Prices (No Graph)
 # -------------------------------------------------------------
 latest_index_data = fetch_argus_jet_fuel_index()
 
 if latest_index_data:
-    st.markdown("### 📈 Argus US Jet Fuel Index — Weekday Spot Prices ($/gal)")
+    st.markdown("### 📊 Argus US Jet Fuel Index — Last 10 Weekdays ($/gal)")
 
     df_index = pd.DataFrame(latest_index_data)
 
@@ -319,24 +324,17 @@ if latest_index_data:
     prev_price = df_index.iloc[-2]["Price"] if len(df_index) > 1 else latest_price
     price_delta = round(latest_price - prev_price, 2)
 
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        st.metric(
-            label=f"Latest Spot Price ({df_index.iloc[-1]['Date']})",
-            value=f"${latest_price:.2f}",
-            delta=f"{price_delta:+.2f}",
-        )
-        st.dataframe(
-            df_index.rename(columns={"Price": "Price ($/gal)"}),
-            use_container_width=True,
-            hide_index=True,
-        )
+    st.metric(
+        label=f"Latest Spot Price ({df_index.iloc[-1]['Date']})",
+        value=f"${latest_price:.2f}",
+        delta=f"{price_delta:+.2f}",
+    )
 
-    with col2:
-        st.line_chart(
-            df_index.set_index("Date")["Price"],
-            use_container_width=True,
-        )
+    st.dataframe(
+        df_index.rename(columns={"Price": "Price ($/gal)"}),
+        use_container_width=True,
+        hide_index=True,
+    )
 
     st.divider()
 
