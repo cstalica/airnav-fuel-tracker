@@ -415,7 +415,7 @@ st.divider()
 latest_index_data = fetch_argus_jet_fuel_index()
 
 if latest_index_data:
-    st.markdown("### 📊 Jet-Fuel Price (Chicago, Houston, Los Angeles, New York)")
+    st.markdown("### 📊 Jet Price (Chicago, Houston, Los Angeles, New York)")
 
     df_index = pd.DataFrame(latest_index_data)
 
