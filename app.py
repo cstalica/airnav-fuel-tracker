@@ -429,13 +429,25 @@ if latest_index_data:
     y_min = round(min_price - padding, 2)
     y_max = round(max_price + padding, 2)
 
-    # Base chart setup with explicit date ordering
+# Base chart setup with explicit date ordering and bold axis titles/labels
     base = alt.Chart(df_index).encode(
-        x=alt.X("Date:N", sort=None, title="Date"),
+        x=alt.X(
+            "Date:N",
+            sort=None,
+            axis=alt.Axis(
+                title="Date",
+                titleFontWeight="bold",
+                labelFontWeight="bold",
+            ),
+        ),
         y=alt.Y(
             "Price:Q",
             scale=alt.Scale(domain=[y_min, y_max]),
-            title="Price ($/gal)",
+            axis=alt.Axis(
+                title="Price ($/gal)",
+                titleFontWeight="bold",
+                labelFontWeight="bold",
+            ),
         ),
     )
 
@@ -443,9 +455,7 @@ if latest_index_data:
     line_layer = base.mark_line(color="#1f77b4", strokeWidth=3)
 
     # Point markers layer
-    point_layer = base.mark_point(
-        color="#1f77b4", size=60, filled=True
-    )
+    point_layer = base.mark_point(color="#1f77b4", size=60, filled=True)
 
     # Price labels text layer formatted explicitly in white
     text_layer = base.mark_text(
@@ -459,11 +469,15 @@ if latest_index_data:
         color=alt.value("white"),
     )
 
-    # Combine layers into chart
+    # Combine layers into chart and apply global axis configuration
     chart = (
         (line_layer + point_layer + text_layer)
         .properties(height=350)
-        .configure_axis(grid=True)
+        .configure_axis(
+            grid=True,
+            titleFontWeight="bold",
+            labelFontWeight="bold",
+        )
     )
 
     st.altair_chart(chart, use_container_width=True)
