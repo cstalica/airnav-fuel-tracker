@@ -415,7 +415,7 @@ st.divider()
 latest_index_data = fetch_argus_jet_fuel_index()
 
 if latest_index_data:
-    st.markdown("### 📊 Argus US Jet Fuel Index — Last 10 Weekdays ($/gal)")
+    st.markdown("### 📊 Argus Average Jet-Fuel Price (Chicago, Houston, Los Angeles, New York)")
 
     df_index = pd.DataFrame(latest_index_data)
 
