@@ -351,7 +351,7 @@ st.write("Search Jet A fuel prices on AirNav.")
 
 with st.form("airport_search_form", border=False):
     airport_input = st.text_input(
-        "Airport Codes Separated by Commas (ICT, FTY, KIXA):", ""
+        "Airport Codes Separated by Commas (ICT, FTY):", ""
     )
     submitted = st.form_submit_button(
         "Fetch Prices", type="primary", use_container_width=False
