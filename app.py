@@ -345,68 +345,7 @@ def scrape_airport_jeta(icao):
 st.title("✈️ Jet A Fuel Tracker")
 
 # -------------------------------------------------------------
-# Display Last 10 Weekday Jet Fuel Index Prices as Graph
-# -------------------------------------------------------------
-latest_index_data = fetch_argus_jet_fuel_index()
-
-if latest_index_data:
-    st.markdown("### 📊 Argus US Jet Fuel Index — Last 10 Weekdays ($/gal)")
-
-    df_index = pd.DataFrame(latest_index_data)
-
-    # Format price labels for point annotations
-    df_index["Price_Label"] = df_index["Price"].apply(lambda x: f"${x:.2f}")
-
-    # Calculate autoscaled Y-axis bounds with padding
-    min_price = df_index["Price"].min()
-    max_price = df_index["Price"].max()
-    padding = max(0.05, (max_price - min_price) * 0.25)
-    y_min = round(min_price - padding, 2)
-    y_max = round(max_price + padding, 2)
-
-    # Base chart setup with explicit date ordering
-    base = alt.Chart(df_index).encode(
-        x=alt.X("Date:N", sort=None, title="Date"),
-        y=alt.Y(
-            "Price:Q",
-            scale=alt.Scale(domain=[y_min, y_max]),
-            title="Price ($/gal)",
-        ),
-    )
-
-    # Line layer
-    line_layer = base.mark_line(color="#1f77b4", strokeWidth=3)
-
-    # Point markers layer
-    point_layer = base.mark_point(
-        color="#1f77b4", size=60, filled=True
-    )
-
-    # Price labels text layer formatted explicitly in white
-    text_layer = base.mark_text(
-        align="center",
-        baseline="bottom",
-        dy=-10,
-        fontSize=12,
-        fontWeight="bold",
-    ).encode(
-        text="Price_Label:N",
-        color=alt.value("white"),
-    )
-
-    # Combine layers into chart
-    chart = (
-        (line_layer + point_layer + text_layer)
-        .properties(height=350)
-        .configure_axis(grid=True)
-    )
-
-    st.altair_chart(chart, use_container_width=True)
-
-    st.divider()
-
-# -------------------------------------------------------------
-# AirNav Jet A Search Interface
+# 1. AirNav Jet A Search Interface (Top)
 # -------------------------------------------------------------
 st.write("Search Jet A fuel prices on AirNav.")
 
@@ -467,3 +406,64 @@ if submitted and airport_input.strip():
             mime="text/csv",
             use_container_width=False,
         )
+
+st.divider()
+
+# -------------------------------------------------------------
+# 2. Display Last 10 Weekday Jet Fuel Index Prices as Graph (Bottom)
+# -------------------------------------------------------------
+latest_index_data = fetch_argus_jet_fuel_index()
+
+if latest_index_data:
+    st.markdown("### 📊 Argus US Jet Fuel Index — Last 10 Weekdays ($/gal)")
+
+    df_index = pd.DataFrame(latest_index_data)
+
+    # Format price labels for point annotations
+    df_index["Price_Label"] = df_index["Price"].apply(lambda x: f"${x:.2f}")
+
+    # Calculate autoscaled Y-axis bounds with padding
+    min_price = df_index["Price"].min()
+    max_price = df_index["Price"].max()
+    padding = max(0.05, (max_price - min_price) * 0.25)
+    y_min = round(min_price - padding, 2)
+    y_max = round(max_price + padding, 2)
+
+    # Base chart setup with explicit date ordering
+    base = alt.Chart(df_index).encode(
+        x=alt.X("Date:N", sort=None, title="Date"),
+        y=alt.Y(
+            "Price:Q",
+            scale=alt.Scale(domain=[y_min, y_max]),
+            title="Price ($/gal)",
+        ),
+    )
+
+    # Line layer
+    line_layer = base.mark_line(color="#1f77b4", strokeWidth=3)
+
+    # Point markers layer
+    point_layer = base.mark_point(
+        color="#1f77b4", size=60, filled=True
+    )
+
+    # Price labels text layer formatted explicitly in white
+    text_layer = base.mark_text(
+        align="center",
+        baseline="bottom",
+        dy=-10,
+        fontSize=12,
+        fontWeight="bold",
+    ).encode(
+        text="Price_Label:N",
+        color=alt.value("white"),
+    )
+
+    # Combine layers into chart
+    chart = (
+        (line_layer + point_layer + text_layer)
+        .properties(height=350)
+        .configure_axis(grid=True)
+    )
+
+    st.altair_chart(chart, use_container_width=True)
