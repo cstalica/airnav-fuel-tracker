@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 import re
 import altair as alt
 import pandas as pd
@@ -17,18 +18,18 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def fetch_argus_jet_fuel_index():
-    """Returns up to 10 recent weekday spot prices from the Argus US Jet Fuel Index, ensuring today's price is included alongside past weekday history."""
+    """Returns the 10 most recent weekday spot prices from the Argus US Jet Fuel Index."""
     fallback_data = [
-        {"Date": "15-Sep", "Price": 4.65},
-        {"Date": "16-Sep", "Price": 4.58},
-        {"Date": "17-Sep", "Price": 4.55},
-        {"Date": "18-Sep", "Price": 4.50},
+        {"Date": "17-Sep", "Price": 4.53},
+        {"Date": "18-Sep", "Price": 4.51},
         {"Date": "21-Sep", "Price": 4.36},
         {"Date": "22-Sep", "Price": 4.52},
         {"Date": "23-Sep", "Price": 4.47},
         {"Date": "24-Sep", "Price": 4.35},
         {"Date": "25-Sep", "Price": 4.30},
-        {"Date": "29-Sep", "Price": 4.40},
+        {"Date": "28-Sep", "Price": 4.40},
+        {"Date": "29-Sep", "Price": 4.42},
+        {"Date": "30-Sep", "Price": 4.56},
     ]
 
     url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/#jet-fuel-prices"
@@ -40,72 +41,53 @@ def fetch_argus_jet_fuel_index():
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             soup = BeautifulSoup(res.content, "html.parser")
+            
+            # 1. Look for embedded JSON script data (Highcharts data series)
+            scripts = soup.find_all("script")
+            parsed_data = []
+
+            for script in scripts:
+                if script.string and "series" in script.string and "data" in script.string:
+                    # Attempt to extract embedded array structure from Highcharts config
+                    match = re.search(r"data:\s*(\[\s*\[.*?\]\s*\])", script.string, re.DOTALL)
+                    if match:
+                        try:
+                            raw_series = json.loads(match.group(1))
+                            for entry in raw_series:
+                                if isinstance(entry, list) and len(entry) >= 2:
+                                    dt_val = entry[0]
+                                    price_val = float(entry[1])
+                                    if isinstance(dt_val, (int, float)):
+                                        dt_str = datetime.utcfromtimestamp(dt_val / 1000).strftime("%d-%b")
+                                    else:
+                                        dt_str = str(dt_val)
+                                    parsed_data.append({"Date": dt_str, "Price": price_val})
+                        except Exception:
+                            continue
+
+            if len(parsed_data) >= 10:
+                return parsed_data[-10:]
+
+            # 2. Extract price banner for the most recent day (e.g. 30-Sep: $4.56)
             text = soup.get_text()
-
-            parsed = []
-
-            # 1. Extract dates and price values separately from chart text block
-            dates = re.findall(r"\b(\d{1,2}-[A-Za-z]{3})\b", text)
-            prices = [
-                float(p)
-                for p in re.findall(r"\$(\d+\.\d{2})", text)
-                if 1.0 <= float(p) <= 10.0
-            ]
-
-            # Match sequential pairs if chart labels line up evenly
-            if dates and prices and len(dates) == len(prices):
-                for d, p in zip(dates, prices):
-                    item = {"Date": d, "Price": p}
-                    if item not in parsed:
-                        parsed.append(item)
-            else:
-                # Fallback token search for interleaved date/price patterns
-                token_matches = re.findall(
-                    r"(\d{1,2}-[A-Za-z]{3})\s*[:\$-]?\s*\$?(\d+\.\d{2})", text
-                )
-                for date_str, price_str in token_matches:
-                    try:
-                        price_val = float(price_str)
-                        if 1.0 <= price_val <= 10.0:
-                            item = {"Date": date_str, "Price": price_val}
-                            if item not in parsed:
-                                parsed.append(item)
-                    except ValueError:
-                        continue
-
-            # 2. Parse top banner single "Price for DD-Mon-YYYY" spot price
             today_match = re.search(
                 r"Price\s+for\s+(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?):\s*\$?(\d+\.\d{2})",
                 text,
                 re.IGNORECASE,
             )
 
+            # Reconcile fallback data dictionary with latest single banner price
+            merged_dict = {item["Date"]: item["Price"] for item in fallback_data}
             if today_match:
                 t_date_str, t_price_str = today_match.groups()
                 d_parts = t_date_str.split("-")
                 formatted_t_date = f"{d_parts[0]}-{d_parts[1]}"
-                t_price_val = float(t_price_str)
+                merged_dict[formatted_t_date] = float(t_price_str)
 
-                # Append or update today's entry
-                existing = next(
-                    (i for i in parsed if i["Date"] == formatted_t_date), None
-                )
-                if existing:
-                    existing["Price"] = t_price_val
-                else:
-                    parsed.append({"Date": formatted_t_date, "Price": t_price_val})
-
-            if len(parsed) >= 10:
-                return parsed[-10:]
-            elif len(parsed) > 0:
-                merged_dict = {item["Date"]: item["Price"] for item in fallback_data}
-                for item in parsed:
-                    merged_dict[item["Date"]] = item["Price"]
-
-                merged_list = [
-                    {"Date": k, "Price": v} for k, v in merged_dict.items()
-                ]
-                return merged_list[-10:]
+            merged_list = [
+                {"Date": k, "Price": v} for k, v in merged_dict.items()
+            ]
+            return merged_list[-10:]
 
     except Exception:
         pass
