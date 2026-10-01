@@ -28,7 +28,7 @@ def fetch_argus_jet_fuel_index():
         {"Date": "23-Sep", "Price": 4.47},
         {"Date": "24-Sep", "Price": 4.35},
         {"Date": "25-Sep", "Price": 4.30},
-        {"Date": "28-Sep", "Price": 4.40},
+        {"Date": "29-Sep", "Price": 4.40},
     ]
 
     url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/#jet-fuel-prices"
@@ -42,23 +42,38 @@ def fetch_argus_jet_fuel_index():
             soup = BeautifulSoup(res.content, "html.parser")
             text = soup.get_text()
 
-            matches = re.findall(
-                r"(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?)[^\d]*\$?(\d+\.\d{2})", text
-            )
-
             parsed = []
-            for date_str, price_str in matches:
-                try:
-                    price_val = float(price_str)
-                    if 1.0 <= price_val <= 10.0:
-                        d_parts = date_str.split("-")
-                        formatted_date = f"{d_parts[0]}-{d_parts[1]}"
-                        item = {"Date": formatted_date, "Price": price_val}
-                        if item not in parsed:
-                            parsed.append(item)
-                except ValueError:
-                    continue
 
+            # 1. Extract dates and price values separately from chart text block
+            dates = re.findall(r"\b(\d{1,2}-[A-Za-z]{3})\b", text)
+            prices = [
+                float(p)
+                for p in re.findall(r"\$(\d+\.\d{2})", text)
+                if 1.0 <= float(p) <= 10.0
+            ]
+
+            # Match sequential pairs if chart labels line up evenly
+            if dates and prices and len(dates) == len(prices):
+                for d, p in zip(dates, prices):
+                    item = {"Date": d, "Price": p}
+                    if item not in parsed:
+                        parsed.append(item)
+            else:
+                # Fallback token search for interleaved date/price patterns
+                token_matches = re.findall(
+                    r"(\d{1,2}-[A-Za-z]{3})\s*[:\$-]?\s*\$?(\d+\.\d{2})", text
+                )
+                for date_str, price_str in token_matches:
+                    try:
+                        price_val = float(price_str)
+                        if 1.0 <= price_val <= 10.0:
+                            item = {"Date": date_str, "Price": price_val}
+                            if item not in parsed:
+                                parsed.append(item)
+                    except ValueError:
+                        continue
+
+            # 2. Parse top banner single "Price for DD-Mon-YYYY" spot price
             today_match = re.search(
                 r"Price\s+for\s+(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?):\s*\$?(\d+\.\d{2})",
                 text,
@@ -71,7 +86,13 @@ def fetch_argus_jet_fuel_index():
                 formatted_t_date = f"{d_parts[0]}-{d_parts[1]}"
                 t_price_val = float(t_price_str)
 
-                if not any(entry["Date"] == formatted_t_date for entry in parsed):
+                # Append or update today's entry
+                existing = next(
+                    (i for i in parsed if i["Date"] == formatted_t_date), None
+                )
+                if existing:
+                    existing["Price"] = t_price_val
+                else:
                     parsed.append({"Date": formatted_t_date, "Price": t_price_val})
 
             if len(parsed) >= 10:
@@ -429,7 +450,7 @@ if latest_index_data:
     y_min = round(min_price - padding, 2)
     y_max = round(max_price + padding, 2)
 
-# Base chart setup with explicit date ordering and bold axis titles/labels
+    # Base chart setup with explicit date ordering and bold axis titles/labels
     base = alt.Chart(df_index).encode(
         x=alt.X(
             "Date:N",
