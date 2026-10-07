@@ -181,4 +181,130 @@ def get_fbo_name(fbo_container):
 
 
 def strip_nearby_airports_section(soup):
-    target = soup.
+    target = soup.find(
+        string=re.compile(
+            r"Alternatives at nearby airports|Nearby airports", re.IGNORECASE
+        )
+    )
+    if target:
+        tr = target.find_parent("tr")
+        if tr:
+            for sibling in list(tr.find_next_siblings("tr")):
+                sibling.decompose()
+            tr.decompose()
+
+
+def scrape_airport_jeta(icao):
+    icao = icao.strip().upper()
+    url = f"https://www.airnav.com/airport/{icao}"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"
+            " AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0"
+            " Mobile/15E148 Safari/604.1"
+        )
+    }
+
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code != 200:
+            return []
+    except Exception:
+        return []
+
+    soup = BeautifulSoup(res.content, "html.parser")
+    strip_nearby_airports_section(soup)
+
+    fbo_results = []
+    for table in soup.find_all("table"):
+        table_text = table.get_text()
+        if any(
+            kw in table_text.lower()
+            for kw in [
+                "alternatives at nearby airports",
+                "nearby airports",
+                "located at",
+            ]
+        ):
+            continue
+        if "Jet A" in table_text and any(x in table_text for x in ["FS", "SS", "AS"]):
+            fbo_container = table.find_parent("tr")
+            if fbo_container and "located at" in fbo_container.get_text().lower():
+                continue
+            price, updated_date = parse_fbo_fuel_table(table)
+            if price:
+                fbo_name, fbo_url = get_fbo_name(fbo_container)
+                fbo_results.append(
+                    {
+                        "Airport": icao,
+                        "FBO Name": fbo_name,
+                        "FBO Link": fbo_url if fbo_url else "",
+                        "Jet A Price": price,
+                        "Price Updated": updated_date,
+                    }
+                )
+    return fbo_results
+
+
+# Main UI Layout
+st.title("✈️ Jet A Fuel Tracker")
+
+st.write("Search Jet A fuel prices on AirNav.")
+
+with st.form("airport_search_form", border=False):
+    airport_input = st.text_input(
+        "Airport Codes Separated by Commas (ICT, FTY):", ""
+    )
+    submitted = st.form_submit_button(
+        "Fetch Prices", type="primary", use_container_width=False
+    )
+
+if submitted and airport_input.strip():
+    airports = [
+        code.strip().upper()
+        for code in airport_input.replace(";", ",").split(",")
+        if code.strip()
+    ]
+    all_data = []
+
+    progress_bar = st.progress(0)
+    for idx, icao in enumerate(airports):
+        st.caption(f"Fetching {icao}...")
+        results = scrape_airport_jeta(icao)
+        if results:
+            all_data.extend(results)
+        else:
+            all_data.append(
+                {
+                    "Airport": icao,
+                    "FBO Name": "N/A or Error",
+                    "FBO Link": "",
+                    "Jet A Price": "N/A",
+                    "Price Updated": "N/A",
+                }
+            )
+        progress_bar.progress((idx + 1) / len(airports))
+
+    if all_data:
+        df = pd.DataFrame(all_data)
+        st.subheader("Results")
+        st.dataframe(
+            df,
+            column_config={
+                "FBO Link": st.column_config.LinkColumn(
+                    "FBO Link",
+                    display_text="View on AirNav",
+                ),
+            },
+            use_container_width=False,
+            hide_index=True,
+        )
+
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📄 Export to CSV",
+            data=csv,
+            file_name=f"airnav_jeta_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            use_container_width=False,
+        )
