@@ -1,113 +1,83 @@
-from datetime import datetime
-import json
-import re
-import altair as alt
 import pandas as pd
-import requests
+from playwright.sync_api import sync_playwright
 import streamlit as st
-from bs4 import BeautifulSoup
-
-# Centered Layout Page Config
-st.set_page_config(
-    page_title="Jet A Fuel Tracker",
-    page_icon="✈️",
-    layout="centered",
-    initial_sidebar_state="collapsed",
-)
 
 
 @st.cache_data(ttl=3600)
 def fetch_live_argus_jet_fuel_index():
-    """Fetches the live 60-day spot price series from Airlines for America."""
-    url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/"
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        )
-    }
+    """Renders the Airlines for America page in headless Chromium and extracts
 
-    parsed_data = []
+    ALL live chart data points directly from JavaScript memory. Strictly no
+    fallbacks.
+    """
+    url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/#jet-fuel-prices"
 
-    try:
-        session = requests.Session()
-        res = session.get(url, headers=headers, timeout=10)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.content, "html.parser")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        # Set viewport large enough to capture the full Highcharts canvas
+        page = browser.new_page(viewport={"width": 1280, "height": 800})
 
-            # Check for embedded iframe or highcharts script tags
-            iframe = soup.find("iframe")
-            target_content = res.text
+        # Navigate to page and wait for full JavaScript execution
+        page.goto(url, wait_until="networkidle", timeout=15000)
 
-            if iframe and iframe.get("src"):
-                iframe_url = iframe["src"]
-                if not iframe_url.startswith("http"):
-                    iframe_url = "https://www.airlines.org" + iframe_url
-                iframe_res = session.get(iframe_url, headers=headers, timeout=10)
-                if iframe_res.status_code == 200:
-                    target_content = iframe_res.text
+        # Evaluate Highcharts object in the global JS scope across main frame and iframes
+        chart_data = page.evaluate("""
+            () => {
+                // Function to extract from Highcharts instance
+                function extractData(win) {
+                    if (win.Highcharts && win.Highcharts.charts) {
+                        const chart = win.Highcharts.charts.find(c => c !== undefined);
+                        if (chart && chart.series && chart.series[0]) {
+                            const categories = chart.xAxis[0].categories || [];
+                            const seriesData = chart.series[0].yData || [];
+                            return categories.map((cat, i) => ({
+                                Date: cat,
+                                Price: parseFloat(seriesData[i])
+                            }));
+                        }
+                    }
+                    return null;
+                }
 
-            # Parse categories (dates) and series data (prices) from Highcharts script
-            cat_match = re.search(
-                r"categories\s*:\s*(\[[^\]]+\])", target_content
+                // 1. Try main window
+                let result = extractData(window);
+                if (result && result.length > 0) return result;
+
+                // 2. Try embedded child iframes
+                for (let i = 0; i < window.frames.length; i++) {
+                    try {
+                        result = extractData(window.frames[i]);
+                        if (result && result.length > 0) return result;
+                    } catch (e) {}
+                }
+                return null;
+            }
+        """)
+
+        browser.close()
+
+        if not chart_data:
+            raise RuntimeError(
+                "Could not extract live chart data. JavaScript chart object not found in DOM."
             )
-            data_match = re.search(
-                r"data\s*:\s*(\[\s*(?:[\d\.]+|\{[\s\S]*?\}|\s*,\s*)*\])",
-                target_content,
-            )
 
-            if cat_match and data_match:
-                raw_cats = cat_match.group(1).replace("'", '"')
-                categories = json.loads(raw_cats)
-
-                prices = [
-                    float(p)
-                    for p in re.findall(r"\b\d+\.\d{2}\b", data_match.group(1))
-                ]
-
-                min_len = min(len(categories), len(prices))
-                for i in range(min_len):
-                    parsed_data.append(
-                        {"Date": str(categories[i]), "Price": prices[i]}
-                    )
-
-    except Exception as e:
-        st.error(f"Error fetching live data: {e}")
-
-    return parsed_data
+        return chart_data
 
 
-# Streamlit Layout & Display
-st.title("✈️ Jet A Fuel Tracker")
+# --- Streamlit Layout ---
+st.title("✈️ Jet A Fuel Tracker (Live Data Only)")
 
-latest_index_data = fetch_live_argus_jet_fuel_index()
+try:
+    live_data = fetch_live_argus_jet_fuel_index()
 
-if latest_index_data:
-    st.markdown("### 📊 Argus US Jet Fuel Index")
-    df_index = pd.DataFrame(latest_index_data)
-    df_index["Price_Label"] = df_index["Price"].apply(lambda x: f"${x:.2f}")
+    df = pd.DataFrame(live_data)
+    st.success(f"Fetched {len(df)} live data points successfully!")
 
-    min_price = df_index["Price"].min()
-    max_price = df_index["Price"].max()
-    padding = max(0.05, (max_price - min_price) * 0.2)
+    # Display full dynamic chart
+    st.line_chart(df, x="Date", y="Price")
 
-    chart = (
-        alt.Chart(df_index)
-        .mark_line(point=True, color="#1f77b4", strokeWidth=2.5)
-        .encode(
-            x=alt.X("Date:N", sort=None, title="Date"),
-            y=alt.Y(
-                "Price:Q",
-                scale=alt.Scale(domain=[min_price - padding, max_price + padding]),
-                title="Price ($/gal)",
-            ),
-            tooltip=["Date", "Price_Label"],
-        )
-        .properties(height=380)
-    )
+    # Display underlying table
+    st.dataframe(df, use_container_width=True)
 
-    st.altair_chart(chart, use_container_width=True)
-    st.dataframe(df_index, use_container_width=True, hide_index=True)
-else:
-    st.warning("⚠️ Live Jet Fuel Index data could not be parsed from the page.")
+except Exception as err:
+    st.error(f"Live data extraction failed: {err}")
