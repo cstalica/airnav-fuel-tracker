@@ -18,9 +18,9 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def fetch_argus_jet_fuel_index():
-    """
-    Fetches the 10 most recent spot prices directly from the Argus US Jet Fuel Index
-    by parsing the Highcharts data embedded in the Airlines for America page.
+    """Fetches the 10 most recent spot prices directly from the Highcharts graph
+
+    embedded in the Airlines for America Argus US Jet Fuel Index page.
     """
     url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/#jet-fuel-prices"
     headers = {
@@ -37,39 +37,67 @@ def fetch_argus_jet_fuel_index():
             soup = BeautifulSoup(res.content, "html.parser")
             parsed_data = []
 
-            # 1. Parse Highcharts script blocks for series data arrays
+            # Search script tags for Highcharts categories (dates) and data (prices)
             scripts = soup.find_all("script")
+            categories = []
+            prices = []
+
             for script in scripts:
-                if not script.string:
+                if not script.string or "Highcharts" not in script.string:
                     continue
 
-                # Match Highcharts series point tuples like [['17-Sep', 4.53], ...] or [[timestamp, 4.53], ...]
-                matches = re.findall(
-                    r"\[\s*[\"']?(\d{1,2}-[A-Za-z]{3})[\"']?\s*,\s*(\d+\.\d+)\s*\]",
+                # 1. Extract x-axis date labels e.g., categories: ['10-Jul', '14-Jul', ...]
+                cat_match = re.search(
+                    r"categories\s*:\s*(\[[^\]]+\])", script.string
+                )
+                if cat_match:
+                    try:
+                        # Normalize JS single quotes to double quotes for JSON parsing
+                        raw_cats = cat_match.group(1).replace("'", '"')
+                        categories = json.loads(raw_cats)
+                    except Exception:
+                        pass
+
+                # 2. Extract series y-values e.g., data: [3.12, 3.40, ...] or [{y: 3.12}, ...]
+                data_match = re.search(
+                    r"series\s*:\s*\[[\s\S]*?data\s*:\s*(\[\s*(?:[\d\.]+|\{[\s\S]*?\}|\s*,\s*)*\])",
                     script.string,
                 )
-                if matches:
-                    for dt_str, price_str in matches:
-                        parsed_data.append(
-                            {"Date": dt_str, "Price": float(price_str)}
+                if data_match:
+                    try:
+                        raw_data = data_match.group(1)
+                        # Find all float price values in the data block
+                        found_prices = re.findall(
+                            r"(?:y\s*:\s*)?(\d+\.\d{2})", raw_data
                         )
+                        if found_prices:
+                            prices = [float(p) for p in found_prices]
+                    except Exception:
+                        pass
+
+                if categories and prices:
                     break
 
-            # 2. Extract x-axis date labels and plot values from page HTML text if script parsing yielded no data
+            # Combine category dates and price values into records
+            if categories and prices:
+                min_len = min(len(categories), len(prices))
+                for i in range(min_len):
+                    parsed_data.append(
+                        {"Date": str(categories[i]), "Price": prices[i]}
+                    )
+
+            # Fallback: Match individual date tokens and prices if Highcharts arrays aren't found
             if not parsed_data:
                 text = soup.get_text()
-                # Extract date labels (e.g., 10-Jul, 17-Sep, 05-Oct)
                 dates = re.findall(r"\b\d{1,2}-[A-Za-z]{3}\b", text)
-                
-                # Extract embedded Highcharts price values (excluding non-price numbers)
-                prices_raw = re.findall(r"\b\d\.\d{2}\b", text)
-                
-                if dates and prices_raw:
-                    prices = [float(p) for p in prices_raw]
-                    min_len = min(len(dates), len(prices))
+                raw_prices = re.findall(r"\b\d\.\d{2}\b", text)
+
+                if dates and raw_prices:
+                    float_prices = [float(p) for p in raw_prices]
+                    min_len = min(len(dates), len(float_prices))
                     for i in range(min_len):
                         parsed_data.append(
-                            {"Date": dates[i], "Price": prices[i]}
+                            {"Date": dates[i], "Price": float_prices[i]}
                         )
 
             if parsed_data:
