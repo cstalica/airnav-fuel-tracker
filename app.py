@@ -1,83 +1,184 @@
+import json
+import re
+from datetime import datetime
+import altair as alt
 import pandas as pd
-from playwright.sync_api import sync_playwright
+import requests
 import streamlit as st
+from bs4 import BeautifulSoup
+
+# Centered Layout Page Config
+st.set_page_config(
+    page_title="Jet A Fuel Tracker",
+    page_icon="✈️",
+    layout="centered",
+    initial_sidebar_state="collapsed",
+)
 
 
-@st.cache_data(ttl=3600)
-def fetch_live_argus_jet_fuel_index():
-    """Renders the Airlines for America page in headless Chromium and extracts
+def parse_fbo_fuel_table(fuel_table):
+    headers = []
+    for tr in fuel_table.find_all("tr"):
+        row_text = tr.get_text()
+        if "Jet A" in row_text:
+            headers = [
+                td.get_text(strip=True)
+                for td in tr.find_all(["td", "th"])
+                if td.get_text(strip=True)
+            ]
+            break
 
-    ALL live chart data points directly from JavaScript memory. Strictly no
-    fallbacks.
-    """
-    url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/#jet-fuel-prices"
+    if not headers or "Jet A" not in headers:
+        return None, "N/A"
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        # Set viewport large enough to capture the full Highcharts canvas
-        page = browser.new_page(viewport={"width": 1280, "height": 800})
+    try:
+        jeta_col_idx = headers.index("Jet A")
+    except ValueError:
+        return None, "N/A"
 
-        # Navigate to page and wait for full JavaScript execution
-        page.goto(url, wait_until="networkidle", timeout=15000)
+    fs_price, ss_price, as_price = None, None, None
 
-        # Evaluate Highcharts object in the global JS scope across main frame and iframes
-        chart_data = page.evaluate("""
-            () => {
-                // Function to extract from Highcharts instance
-                function extractData(win) {
-                    if (win.Highcharts && win.Highcharts.charts) {
-                        const chart = win.Highcharts.charts.find(c => c !== undefined);
-                        if (chart && chart.series && chart.series[0]) {
-                            const categories = chart.xAxis[0].categories || [];
-                            const seriesData = chart.series[0].yData || [];
-                            return categories.map((cat, i) => ({
-                                Date: cat,
-                                Price: parseFloat(seriesData[i])
-                            }));
-                        }
-                    }
-                    return null;
-                }
+    for tr in fuel_table.find_all("tr"):
+        cells = [
+            td.get_text(strip=True)
+            for td in tr.find_all(["td", "th"])
+            if td.get_text(strip=True)
+        ]
+        if not cells:
+            continue
 
-                // 1. Try main window
-                let result = extractData(window);
-                if (result && result.length > 0) return result;
+        service_type = cells[0].upper()
+        price_cells = cells[1:]
 
-                // 2. Try embedded child iframes
-                for (let i = 0; i < window.frames.length; i++) {
-                    try {
-                        result = extractData(window.frames[i]);
-                        if (result && result.length > 0) return result;
-                    } catch (e) {}
-                }
-                return null;
-            }
-        """)
+        if service_type == "FS" and jeta_col_idx < len(price_cells):
+            val = price_cells[jeta_col_idx]
+            if val and val != "N/A":
+                fs_price = val
+        elif service_type == "SS" and jeta_col_idx < len(price_cells):
+            val = price_cells[jeta_col_idx]
+            if val and val != "N/A":
+                ss_price = val
+        elif service_type == "AS" and jeta_col_idx < len(price_cells):
+            val = price_cells[jeta_col_idx]
+            if val and val != "N/A":
+                as_price = val
 
-        browser.close()
+    price = fs_price or ss_price or as_price
 
-        if not chart_data:
-            raise RuntimeError(
-                "Could not extract live chart data. JavaScript chart object not found in DOM."
+    if price:
+        try:
+            clean_val = re.sub(r"[^\d.]", "", price)
+            price = f"${float(clean_val):.2f}"
+        except ValueError:
+            pass
+
+    table_text = fuel_table.get_text()
+    date_match = re.search(
+        r"Updated\s+(\d{1,2}-[A-Za-z]{3}-\d{4})", table_text, re.IGNORECASE
+    )
+    updated_date = "N/A"
+    if date_match:
+        raw_date = date_match.group(1)
+        try:
+            parsed_dt = datetime.strptime(raw_date, "%d-%b-%Y")
+            updated_date = parsed_dt.strftime("%m-%d-%Y")
+        except ValueError:
+            updated_date = raw_date
+
+    return price, updated_date
+
+
+def get_fbo_name(fbo_container):
+    if not fbo_container:
+        return "Unknown FBO", None
+
+    tds = fbo_container.find_all("td", recursive=False) or fbo_container.find_all("td")
+    target_elem = tds[0] if tds else fbo_container
+
+    def clean_name(raw_text):
+        if not raw_text:
+            return ""
+        cleaned = re.sub(
+            r"^(More info and photos of|More info about|More info of|More info|Photos of|Photos)\s*",
+            "",
+            raw_text,
+            flags=re.IGNORECASE,
+        ).strip()
+        return re.sub(r"\d{3}[-\s]?\d{3}[-\s]?\d{4}.*", "", cleaned).strip()
+
+    ignore_keywords = [
+        "more info", "website", "web site", "email", "guaranteed", "read",
+        "write", "photos", "asri", "tel:", "fax:", "hertz", "go rentals",
+        "enterprise", "national", "caa", "nata", "airboss", "reserve",
+        "multi service", "click here",
+    ]
+
+    fbo_links = target_elem.find_all("a", href=re.compile(r"/fbo/", re.IGNORECASE))
+    for a_tag in fbo_links:
+        text = a_tag.get_text(strip=True) or (
+            a_tag.find("img").get("alt", "") if a_tag.find("img") else ""
+        )
+        cleaned = clean_name(text)
+        if (
+            cleaned
+            and len(cleaned) > 2
+            and not any(kw in cleaned.lower() for kw in ignore_keywords)
+        ):
+            href = a_tag.get("href", "")
+            full_url = f"https://www.airnav.com{href}" if href.startswith("/") else href
+            return cleaned, full_url
+
+    for a_tag in target_elem.find_all("a"):
+        text = a_tag.get_text(strip=True) or (
+            a_tag.find("img").get("alt", "") if a_tag.find("img") else ""
+        )
+        cleaned = clean_name(text)
+        if (
+            cleaned
+            and len(cleaned) > 2
+            and not any(kw in cleaned.lower() for kw in ignore_keywords)
+        ):
+            href = a_tag.get("href", "")
+            full_url = f"https://www.airnav.com{href}" if href.startswith("/") else href
+            return cleaned, full_url
+
+    for b_tag in target_elem.find_all(["b", "strong"]):
+        cleaned = clean_name(b_tag.get_text(strip=True))
+        if (
+            cleaned
+            and len(cleaned) > 2
+            and not any(kw in cleaned.lower() for kw in ignore_keywords)
+        ):
+            return cleaned, None
+
+    for img in target_elem.find_all("img"):
+        cleaned = clean_name(img.get("alt", "") or img.get("title", ""))
+        if (
+            cleaned
+            and len(cleaned) > 2
+            and not any(
+                kw in cleaned.lower()
+                for kw in ignore_keywords + ["phillips", "independent", "world fuel"]
             )
+        ):
+            return cleaned, None
 
-        return chart_data
+    lines = [
+        line.strip()
+        for line in target_elem.get_text(separator="\n").split("\n")
+        if line.strip()
+    ]
+    for line in lines:
+        cleaned = clean_name(line)
+        if (
+            cleaned
+            and len(cleaned) > 2
+            and not any(kw in cleaned.lower() for kw in ignore_keywords)
+        ):
+            return cleaned, None
+
+    return "Unknown FBO", None
 
 
-# --- Streamlit Layout ---
-st.title("✈️ Jet A Fuel Tracker (Live Data Only)")
-
-try:
-    live_data = fetch_live_argus_jet_fuel_index()
-
-    df = pd.DataFrame(live_data)
-    st.success(f"Fetched {len(df)} live data points successfully!")
-
-    # Display full dynamic chart
-    st.line_chart(df, x="Date", y="Price")
-
-    # Display underlying table
-    st.dataframe(df, use_container_width=True)
-
-except Exception as err:
-    st.error(f"Live data extraction failed: {err}")
+def strip_nearby_airports_section(soup):
+    target = soup.
