@@ -16,94 +16,100 @@ st.set_page_config(
 )
 
 
-@st.cache_data(ttl=3600)
-def fetch_argus_jet_fuel_index():
-    """Robustly fetches live spot prices from the Argus US Jet Fuel Index using multi-pattern JS & DOM scraping.
-    
-    Returns an empty list only if all network or scraping attempts fail.
+def fetch_from_eia_live():
+    """Live fallback to U.S. Energy Information Administration (EIA) daily Jet Fuel spot prices.
+    This guarantees live data retrieval if airlines.org blocks automated scraping.
     """
-    url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/#jet-fuel-prices"
+    url = "https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?n=PET&s=EER_EPJK_PF4_RGC_DPG&f=D"
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    }
+    
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, "html.parser")
+            rows = soup.find_all("tr")
+            parsed = []
+            
+            for row in rows:
+                cols = row.find_all("td")
+                if len(cols) >= 2:
+                    date_str = cols[0].get_text(strip=True)
+                    price_str = cols[1].get_text(strip=True)
+                    
+                    price_match = re.search(r"^\$?(\d+\.\d{2})$", price_str)
+                    if price_match:
+                        try:
+                            # Parse dates like "2024-Oct-04" or "Oct 04, 2024"
+                            dt_clean = re.sub(r"[^\w\s-]", "", date_str)
+                            dt_obj = pd.to_datetime(dt_clean)
+                            parsed.append({
+                                "Date": dt_obj.strftime("%d-%b"),
+                                "Price": float(price_match.group(1)),
+                                "RawDate": dt_obj
+                            })
+                        except Exception:
+                            continue
+            
+            if parsed:
+                # Sort chronologically and return last 10 records
+                df_sorted = pd.DataFrame(parsed).sort_values("RawDate").tail(10)
+                return df_sorted[["Date", "Price"]].to_dict("records")
+    except Exception:
+        pass
+    
+    return []
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_argus_jet_fuel_index():
+    """Fetches live spot prices from Airlines.org or EIA live feed.
+    Raises an error on failure so Streamlit does NOT cache an empty list.
+    """
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
-    }
+    })
 
+    url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/#jet-fuel-prices"
     parsed_data = []
 
+    # Attempt Primary Source (Airlines.org)
     try:
-        res = requests.get(url, headers=headers, timeout=12)
+        res = session.get(url, timeout=8)
         if res.status_code == 200:
             html = res.text
-
-            # Strategy 1: Direct Regex extraction for Highcharts Date.UTC, timestamps, or date strings
+            
+            # Extract Highcharts Date.UTC matches
             utc_matches = re.findall(
                 r'\[\s*(?:Date\.UTC\(\s*(\d{4})\s*,\s*(\d{1,2})\s*,\s*(\d{1,2})\s*\)|(\d{10,13})|[\'"]([^\'"]+)[\'"])\s*,\s*(\d+\.\d{1,4})\s*\]',
-                html,
+                html
             )
-
             for match in utc_matches:
                 year, month, day, ts, date_str, price_str = match
                 try:
                     price_val = float(price_str)
                     if year and month and day:
-                        # Note: JavaScript months are 0-indexed (0 = Jan, 8 = Sep, 9 = Oct)
                         m_int = int(month) + 1
-                        dt_obj = datetime(
-                            int(year), m_int if m_int <= 12 else 12, int(day)
-                        )
+                        dt_obj = datetime(int(year), m_int if m_int <= 12 else 12, int(day))
                         dt_formatted = dt_obj.strftime("%d-%b")
                     elif ts:
                         ts_val = int(ts)
-                        if ts_val > 1e11:  # Milliseconds timestamp
+                        if ts_val > 1e11:
                             ts_val /= 1000
-                        dt_formatted = datetime.utcfromtimestamp(ts_val).strftime(
-                            "%d-%b"
-                        )
+                        dt_formatted = datetime.utcfromtimestamp(ts_val).strftime("%d-%b")
                     elif date_str:
                         dt_formatted = date_str
                     else:
                         continue
-
                     parsed_data.append({"Date": dt_formatted, "Price": price_val})
                 except Exception:
                     continue
 
-            # Strategy 2: Highcharts embedded JSON series arrays in <script> tags
-            if not parsed_data:
-                soup = BeautifulSoup(html, "html.parser")
-                scripts = soup.find_all("script")
-                for script in scripts:
-                    if script.string and (
-                        "series" in script.string or "data" in script.string
-                    ):
-                        array_matches = re.findall(
-                            r"\[\s*\[.*?\]\s*\]", script.string, re.DOTALL
-                        )
-                        for arr_str in array_matches:
-                            try:
-                                # Replace Date.UTC(...) with dummy timestamp for standard JSON parsing
-                                cleaned_str = re.sub(
-                                    r"Date\.UTC\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)",
-                                    r"1700000000000",
-                                    arr_str,
-                                )
-                                raw_series = json.loads(cleaned_str)
-                                for entry in raw_series:
-                                    if isinstance(entry, list) and len(entry) >= 2:
-                                        p_val = float(entry[1])
-                                        d_val = str(entry[0])
-                                        parsed_data.append(
-                                            {"Date": d_val, "Price": p_val}
-                                        )
-                            except Exception:
-                                continue
-
-            # Strategy 3: HTML DOM Table parsing fallback
+            # DOM table fallback on primary source
             if not parsed_data:
                 soup = BeautifulSoup(html, "html.parser")
                 for tr in soup.find_all("tr"):
@@ -112,28 +118,28 @@ def fetch_argus_jet_fuel_index():
                         d_text = tds[0].get_text(strip=True)
                         p_text = tds[1].get_text(strip=True)
                         p_match = re.search(r"\$?(\d+\.\d{2})", p_text)
-                        if p_match and re.search(
-                            r"\d{1,2}-[A-Za-z]{3}|\d{1,2}/\d{1,2}", d_text
-                        ):
-                            parsed_data.append(
-                                {"Date": d_text, "Price": float(p_match.group(1))}
-                            )
-
-            if parsed_data:
-                # Deduplicate entries while preserving chronological order
-                unique_data = []
-                seen = set()
-                for item in parsed_data:
-                    key = (item["Date"], item["Price"])
-                    if key not in seen:
-                        seen.add(key)
-                        unique_data.append(item)
-                return unique_data[-10:]
-
+                        if p_match and re.search(r"\d{1,2}-[A-Za-z]{3}|\d{1,2}/\d{1,2}", d_text):
+                            parsed_data.append({"Date": d_text, "Price": float(p_match.group(1))})
     except Exception:
         pass
 
-    return []
+    # Attempt Live Fallback Source (EIA) if primary was blocked or returned no entries
+    if not parsed_data:
+        parsed_data = fetch_from_eia_live()
+
+    if parsed_data:
+        # Deduplicate while preserving order
+        unique_data = []
+        seen = set()
+        for item in parsed_data:
+            key = (item["Date"], item["Price"])
+            if key not in seen:
+                seen.add(key)
+                unique_data.append(item)
+        return unique_data[-10:]
+
+    # Raise an exception so Streamlit DOES NOT cache this failure
+    raise RuntimeError("Failed to fetch live data from all sources.")
 
 
 def parse_fbo_fuel_table(fuel_table):
@@ -156,9 +162,7 @@ def parse_fbo_fuel_table(fuel_table):
     except ValueError:
         return None, "N/A"
 
-    fs_price = None
-    ss_price = None
-    as_price = None
+    fs_price, ss_price, as_price = None, None, None
 
     for tr in fuel_table.find_all("tr"):
         cells = [
@@ -229,27 +233,10 @@ def get_fbo_name(fbo_container):
         return re.sub(r"\d{3}[-\s]?\d{3}[-\s]?\d{4}.*", "", cleaned).strip()
 
     ignore_keywords = [
-        "more info",
-        "website",
-        "web site",
-        "email",
-        "guaranteed",
-        "read",
-        "write",
-        "photos",
-        "asri",
-        "tel:",
-        "fax:",
-        "hertz",
-        "go rentals",
-        "enterprise",
-        "national",
-        "caa",
-        "nata",
-        "airboss",
-        "reserve",
-        "multi service",
-        "click here",
+        "more info", "website", "web site", "email", "guaranteed", "read",
+        "write", "photos", "asri", "tel:", "fax:", "hertz", "go rentals",
+        "enterprise", "national", "caa", "nata", "airboss", "reserve",
+        "multi service", "click here",
     ]
 
     fbo_links = target_elem.find_all("a", href=re.compile(r"/fbo/", re.IGNORECASE))
@@ -258,11 +245,7 @@ def get_fbo_name(fbo_container):
             a_tag.find("img").get("alt", "") if a_tag.find("img") else ""
         )
         cleaned = clean_name(text)
-        if (
-            cleaned
-            and len(cleaned) > 2
-            and not any(kw in cleaned.lower() for kw in ignore_keywords)
-        ):
+        if cleaned and len(cleaned) > 2 and not any(kw in cleaned.lower() for kw in ignore_keywords):
             href = a_tag.get("href", "")
             full_url = f"https://www.airnav.com{href}" if href.startswith("/") else href
             return cleaned, full_url
@@ -272,33 +255,20 @@ def get_fbo_name(fbo_container):
             a_tag.find("img").get("alt", "") if a_tag.find("img") else ""
         )
         cleaned = clean_name(text)
-        if (
-            cleaned
-            and len(cleaned) > 2
-            and not any(kw in cleaned.lower() for kw in ignore_keywords)
-        ):
+        if cleaned and len(cleaned) > 2 and not any(kw in cleaned.lower() for kw in ignore_keywords):
             href = a_tag.get("href", "")
             full_url = f"https://www.airnav.com{href}" if href.startswith("/") else href
             return cleaned, full_url
 
     for b_tag in target_elem.find_all(["b", "strong"]):
         cleaned = clean_name(b_tag.get_text(strip=True))
-        if (
-            cleaned
-            and len(cleaned) > 2
-            and not any(kw in cleaned.lower() for kw in ignore_keywords)
-        ):
+        if cleaned and len(cleaned) > 2 and not any(kw in cleaned.lower() for kw in ignore_keywords):
             return cleaned, None
 
     for img in target_elem.find_all("img"):
         cleaned = clean_name(img.get("alt", "") or img.get("title", ""))
-        if (
-            cleaned
-            and len(cleaned) > 2
-            and not any(
-                kw in cleaned.lower()
-                for kw in ignore_keywords + ["phillips", "independent", "world fuel"]
-            )
+        if cleaned and len(cleaned) > 2 and not any(
+            kw in cleaned.lower() for kw in ignore_keywords + ["phillips", "independent", "world fuel"]
         ):
             return cleaned, None
 
@@ -309,11 +279,7 @@ def get_fbo_name(fbo_container):
     ]
     for line in lines:
         cleaned = clean_name(line)
-        if (
-            cleaned
-            and len(cleaned) > 2
-            and not any(kw in cleaned.lower() for kw in ignore_keywords)
-        ):
+        if cleaned and len(cleaned) > 2 and not any(kw in cleaned.lower() for kw in ignore_keywords):
             return cleaned, None
 
     return "Unknown FBO", None
@@ -321,9 +287,7 @@ def get_fbo_name(fbo_container):
 
 def strip_nearby_airports_section(soup):
     target = soup.find(
-        string=re.compile(
-            r"Alternatives at nearby airports|Nearby airports", re.IGNORECASE
-        )
+        string=re.compile(r"Alternatives at nearby airports|Nearby airports", re.IGNORECASE)
     )
     if target:
         tr = target.find_parent("tr")
@@ -359,11 +323,7 @@ def scrape_airport_jeta(icao):
         table_text = table.get_text()
         if any(
             kw in table_text.lower()
-            for kw in [
-                "alternatives at nearby airports",
-                "nearby airports",
-                "located at",
-            ]
+            for kw in ["alternatives at nearby airports", "nearby airports", "located at"]
         ):
             continue
         if "Jet A" in table_text and any(x in table_text for x in ["FS", "SS", "AS"]):
@@ -373,33 +333,25 @@ def scrape_airport_jeta(icao):
             price, updated_date = parse_fbo_fuel_table(table)
             if price:
                 fbo_name, fbo_url = get_fbo_name(fbo_container)
-                fbo_results.append(
-                    {
-                        "Airport": icao,
-                        "FBO Name": fbo_name,
-                        "FBO Link": fbo_url if fbo_url else "",
-                        "Jet A Price": price,
-                        "Price Updated": updated_date,
-                    }
-                )
+                fbo_results.append({
+                    "Airport": icao,
+                    "FBO Name": fbo_name,
+                    "FBO Link": fbo_url if fbo_url else "",
+                    "Jet A Price": price,
+                    "Price Updated": updated_date,
+                })
     return fbo_results
 
 
 # Main UI Layout
 st.title("✈️ Jet A Fuel Tracker")
 
-# -------------------------------------------------------------
-# 1. AirNav Jet A Search Interface (Top)
-# -------------------------------------------------------------
+# AirNav Search Section
 st.write("Search Jet A fuel prices on AirNav.")
 
 with st.form("airport_search_form", border=False):
-    airport_input = st.text_input(
-        "Airport Codes Separated by Commas (ICT, FTY):", ""
-    )
-    submitted = st.form_submit_button(
-        "Fetch Prices", type="primary", use_container_width=False
-    )
+    airport_input = st.text_input("Airport Codes Separated by Commas (ICT, FTY):", "")
+    submitted = st.form_submit_button("Fetch Prices", type="primary")
 
 if submitted and airport_input.strip():
     airports = [
@@ -408,23 +360,21 @@ if submitted and airport_input.strip():
         if code.strip()
     ]
     all_data = []
-
     progress_bar = st.progress(0)
+
     for idx, icao in enumerate(airports):
         st.caption(f"Fetching {icao}...")
         results = scrape_airport_jeta(icao)
         if results:
             all_data.extend(results)
         else:
-            all_data.append(
-                {
-                    "Airport": icao,
-                    "FBO Name": "N/A or Error",
-                    "FBO Link": "",
-                    "Jet A Price": "N/A",
-                    "Price Updated": "N/A",
-                }
-            )
+            all_data.append({
+                "Airport": icao,
+                "FBO Name": "N/A or Error",
+                "FBO Link": "",
+                "Jet A Price": "N/A",
+                "Price Updated": "N/A",
+            })
         progress_bar.progress((idx + 1) / len(airports))
 
     if all_data:
@@ -438,7 +388,6 @@ if submitted and airport_input.strip():
                     display_text="View on AirNav",
                 ),
             },
-            use_container_width=False,
             hide_index=True,
         )
 
@@ -448,82 +397,49 @@ if submitted and airport_input.strip():
             data=csv,
             file_name=f"airnav_jeta_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv",
-            use_container_width=False,
         )
 
 st.divider()
 
-# -------------------------------------------------------------
-# 2. Display Last 10 Weekday Jet Fuel Index Prices as Graph (Bottom)
-# -------------------------------------------------------------
-latest_index_data = fetch_argus_jet_fuel_index()
+# Jet Fuel Index Section
+col1, col2 = st.columns([3, 1])
+with col1:
+    st.markdown("### 📊 Jet Fuel Spot Price Index")
+with col2:
+    if st.button("🔄 Refresh Data"):
+        st.cache_data.clear()
+        st.rerun()
+
+try:
+    latest_index_data = fetch_argus_jet_fuel_index()
+except Exception:
+    latest_index_data = []
 
 if latest_index_data:
-    st.markdown("### 📊 Jet Price (Chicago, Houston, Los Angeles, New York)")
-
     df_index = pd.DataFrame(latest_index_data)
-
-    # Format price labels for point annotations
     df_index["Price_Label"] = df_index["Price"].apply(lambda x: f"${x:.2f}")
 
-    # Calculate autoscaled Y-axis bounds with padding
     min_price = df_index["Price"].min()
     max_price = df_index["Price"].max()
     padding = max(0.05, (max_price - min_price) * 0.25)
     y_min = round(min_price - padding, 2)
     y_max = round(max_price + padding, 2)
 
-    # Base chart setup with explicit date ordering and bold axis titles/labels
     base = alt.Chart(df_index).encode(
-        x=alt.X(
-            "Date:N",
-            sort=None,
-            axis=alt.Axis(
-                title="Date",
-                titleFontWeight="bold",
-                labelFontWeight="bold",
-            ),
-        ),
-        y=alt.Y(
-            "Price:Q",
-            scale=alt.Scale(domain=[y_min, y_max]),
-            axis=alt.Axis(
-                title="Price ($/gal)",
-                titleFontWeight="bold",
-                labelFontWeight="bold",
-            ),
-        ),
+        x=alt.X("Date:N", sort=None, axis=alt.Axis(title="Date", titleFontWeight="bold", labelFontWeight="bold")),
+        y=alt.Y("Price:Q", scale=alt.Scale(domain=[y_min, y_max]), axis=alt.Axis(title="Price ($/gal)", titleFontWeight="bold", labelFontWeight="bold")),
     )
 
-    # Line layer
     line_layer = base.mark_line(color="#1f77b4", strokeWidth=3)
-
-    # Point markers layer
     point_layer = base.mark_point(color="#1f77b4", size=60, filled=True)
-
-    # Price labels text layer formatted explicitly in white
     text_layer = base.mark_text(
-        align="center",
-        baseline="bottom",
-        dy=-10,
-        fontSize=12,
-        fontWeight="bold",
+        align="center", baseline="bottom", dy=-10, fontSize=12, fontWeight="bold"
     ).encode(
         text="Price_Label:N",
         color=alt.value("white"),
     )
 
-    # Combine layers into chart and apply global axis configuration
-    chart = (
-        (line_layer + point_layer + text_layer)
-        .properties(height=350)
-        .configure_axis(
-            grid=True,
-            titleFontWeight="bold",
-            labelFontWeight="bold",
-        )
-    )
-
+    chart = (line_layer + point_layer + text_layer).properties(height=350).configure_axis(grid=True)
     st.altair_chart(chart, use_container_width=True)
 else:
-    st.info("⚠️ Live Jet Fuel Index data is currently unavailable.")
+    st.warning("⚠️ Live Jet Fuel Index data is currently unavailable. Click 'Refresh Data' above to try again.")
