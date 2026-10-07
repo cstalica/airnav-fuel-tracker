@@ -18,51 +18,106 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def fetch_argus_jet_fuel_index():
-    """Dynamically fetches the 10 most recent weekday spot prices from the Argus US Jet Fuel Index.
+    """Robustly fetches live spot prices from the Argus US Jet Fuel Index using multi-pattern JS & DOM scraping.
     
-    Returns an empty list if live fetching fails (no fixed fallback prices are used).
+    Returns an empty list only if all network or scraping attempts fail.
     """
     url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/#jet-fuel-prices"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
     }
 
     parsed_data = []
 
     try:
-        res = requests.get(url, headers=headers, timeout=10)
+        res = requests.get(url, headers=headers, timeout=12)
         if res.status_code == 200:
-            soup = BeautifulSoup(res.content, "html.parser")
+            html = res.text
 
-            # 1. Search for embedded JSON script data (Highcharts series)
-            scripts = soup.find_all("script")
-            for script in scripts:
-                if (
-                    script.string
-                    and ("series" in script.string or "Highcharts" in script.string)
-                    and "data" in script.string
-                ):
-                    matches = re.findall(
-                        r"data:\s*(\[\s*\[.*?\]\s*\])", script.string, re.DOTALL
-                    )
-                    for match_str in matches:
-                        try:
-                            raw_series = json.loads(match_str)
-                            for entry in raw_series:
-                                if isinstance(entry, list) and len(entry) >= 2:
-                                    dt_val = entry[0]
-                                    price_val = float(entry[1])
-                                    if isinstance(dt_val, (int, float)):
-                                        dt_str = datetime.utcfromtimestamp(
-                                            dt_val / 1000
-                                        ).strftime("%d-%b")
-                                    else:
-                                        dt_str = str(dt_val)
-                                    parsed_data.append(
-                                        {"Date": dt_str, "Price": price_val}
-                                    )
-                        except Exception:
-                            continue
+            # Strategy 1: Direct Regex extraction for Highcharts Date.UTC, timestamps, or date strings
+            utc_matches = re.findall(
+                r'\[\s*(?:Date\.UTC\(\s*(\d{4})\s*,\s*(\d{1,2})\s*,\s*(\d{1,2})\s*\)|(\d{10,13})|[\'"]([^\'"]+)[\'"])\s*,\s*(\d+\.\d{1,4})\s*\]',
+                html,
+            )
+
+            for match in utc_matches:
+                year, month, day, ts, date_str, price_str = match
+                try:
+                    price_val = float(price_str)
+                    if year and month and day:
+                        # Note: JavaScript months are 0-indexed (0 = Jan, 8 = Sep, 9 = Oct)
+                        m_int = int(month) + 1
+                        dt_obj = datetime(
+                            int(year), m_int if m_int <= 12 else 12, int(day)
+                        )
+                        dt_formatted = dt_obj.strftime("%d-%b")
+                    elif ts:
+                        ts_val = int(ts)
+                        if ts_val > 1e11:  # Milliseconds timestamp
+                            ts_val /= 1000
+                        dt_formatted = datetime.utcfromtimestamp(ts_val).strftime(
+                            "%d-%b"
+                        )
+                    elif date_str:
+                        dt_formatted = date_str
+                    else:
+                        continue
+
+                    parsed_data.append({"Date": dt_formatted, "Price": price_val})
+                except Exception:
+                    continue
+
+            # Strategy 2: Highcharts embedded JSON series arrays in <script> tags
+            if not parsed_data:
+                soup = BeautifulSoup(html, "html.parser")
+                scripts = soup.find_all("script")
+                for script in scripts:
+                    if script.string and (
+                        "series" in script.string or "data" in script.string
+                    ):
+                        array_matches = re.findall(
+                            r"\[\s*\[.*?\]\s*\]", script.string, re.DOTALL
+                        )
+                        for arr_str in array_matches:
+                            try:
+                                # Replace Date.UTC(...) with dummy timestamp for standard JSON parsing
+                                cleaned_str = re.sub(
+                                    r"Date\.UTC\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)",
+                                    r"1700000000000",
+                                    arr_str,
+                                )
+                                raw_series = json.loads(cleaned_str)
+                                for entry in raw_series:
+                                    if isinstance(entry, list) and len(entry) >= 2:
+                                        p_val = float(entry[1])
+                                        d_val = str(entry[0])
+                                        parsed_data.append(
+                                            {"Date": d_val, "Price": p_val}
+                                        )
+                            except Exception:
+                                continue
+
+            # Strategy 3: HTML DOM Table parsing fallback
+            if not parsed_data:
+                soup = BeautifulSoup(html, "html.parser")
+                for tr in soup.find_all("tr"):
+                    tds = tr.find_all(["td", "th"])
+                    if len(tds) >= 2:
+                        d_text = tds[0].get_text(strip=True)
+                        p_text = tds[1].get_text(strip=True)
+                        p_match = re.search(r"\$?(\d+\.\d{2})", p_text)
+                        if p_match and re.search(
+                            r"\d{1,2}-[A-Za-z]{3}|\d{1,2}/\d{1,2}", d_text
+                        ):
+                            parsed_data.append(
+                                {"Date": d_text, "Price": float(p_match.group(1))}
+                            )
 
             if parsed_data:
                 # Deduplicate entries while preserving chronological order
@@ -74,30 +129,6 @@ def fetch_argus_jet_fuel_index():
                         seen.add(key)
                         unique_data.append(item)
                 return unique_data[-10:]
-
-            # 2. Search HTML tables dynamically as secondary live extraction
-            tables = soup.find_all("table")
-            for table in tables:
-                rows = table.find_all("tr")
-                for row in rows:
-                    cols = [
-                        td.get_text(strip=True)
-                        for td in row.find_all(["td", "th"])
-                    ]
-                    if len(cols) >= 2:
-                        date_part, price_part = cols[0], cols[1]
-                        price_match = re.search(r"\$?(\d+\.\d{2})", price_part)
-                        if price_match:
-                            try:
-                                p_val = float(price_match.group(1))
-                                parsed_data.append(
-                                    {"Date": date_part, "Price": p_val}
-                                )
-                            except ValueError:
-                                pass
-
-            if parsed_data:
-                return parsed_data[-10:]
 
     except Exception:
         pass
