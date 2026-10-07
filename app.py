@@ -1,11 +1,11 @@
-from datetime import datetime
 import json
 import re
+from datetime import datetime
 import altair as alt
 import pandas as pd
-from bs4 import BeautifulSoup
 import requests
 import streamlit as st
+from bs4 import BeautifulSoup
 
 # Centered Layout Page Config
 st.set_page_config(
@@ -18,81 +18,91 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def fetch_argus_jet_fuel_index():
-    """Returns the 10 most recent weekday spot prices from the Argus US Jet Fuel Index."""
-    fallback_data = [
-        {"Date": "17-Sep", "Price": 4.53},
-        {"Date": "18-Sep", "Price": 4.51},
-        {"Date": "21-Sep", "Price": 4.36},
-        {"Date": "22-Sep", "Price": 4.52},
-        {"Date": "23-Sep", "Price": 4.47},
-        {"Date": "24-Sep", "Price": 4.35},
-        {"Date": "25-Sep", "Price": 4.30},
-        {"Date": "28-Sep", "Price": 4.40},
-        {"Date": "29-Sep", "Price": 4.42},
-        {"Date": "30-Sep", "Price": 4.56},
-    ]
-
+    """Dynamically fetches the 10 most recent weekday spot prices from the Argus US Jet Fuel Index.
+    
+    Returns an empty list if live fetching fails (no fixed fallback prices are used).
+    """
     url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/#jet-fuel-prices"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
+    parsed_data = []
+
     try:
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             soup = BeautifulSoup(res.content, "html.parser")
-            
-            # 1. Look for embedded JSON script data (Highcharts data series)
-            scripts = soup.find_all("script")
-            parsed_data = []
 
+            # 1. Search for embedded JSON script data (Highcharts series)
+            scripts = soup.find_all("script")
             for script in scripts:
-                if script.string and "series" in script.string and "data" in script.string:
-                    # Attempt to extract embedded array structure from Highcharts config
-                    match = re.search(r"data:\s*(\[\s*\[.*?\]\s*\])", script.string, re.DOTALL)
-                    if match:
+                if (
+                    script.string
+                    and ("series" in script.string or "Highcharts" in script.string)
+                    and "data" in script.string
+                ):
+                    matches = re.findall(
+                        r"data:\s*(\[\s*\[.*?\]\s*\])", script.string, re.DOTALL
+                    )
+                    for match_str in matches:
                         try:
-                            raw_series = json.loads(match.group(1))
+                            raw_series = json.loads(match_str)
                             for entry in raw_series:
                                 if isinstance(entry, list) and len(entry) >= 2:
                                     dt_val = entry[0]
                                     price_val = float(entry[1])
                                     if isinstance(dt_val, (int, float)):
-                                        dt_str = datetime.utcfromtimestamp(dt_val / 1000).strftime("%d-%b")
+                                        dt_str = datetime.utcfromtimestamp(
+                                            dt_val / 1000
+                                        ).strftime("%d-%b")
                                     else:
                                         dt_str = str(dt_val)
-                                    parsed_data.append({"Date": dt_str, "Price": price_val})
+                                    parsed_data.append(
+                                        {"Date": dt_str, "Price": price_val}
+                                    )
                         except Exception:
                             continue
 
-            if len(parsed_data) >= 10:
+            if parsed_data:
+                # Deduplicate entries while preserving chronological order
+                unique_data = []
+                seen = set()
+                for item in parsed_data:
+                    key = (item["Date"], item["Price"])
+                    if key not in seen:
+                        seen.add(key)
+                        unique_data.append(item)
+                return unique_data[-10:]
+
+            # 2. Search HTML tables dynamically as secondary live extraction
+            tables = soup.find_all("table")
+            for table in tables:
+                rows = table.find_all("tr")
+                for row in rows:
+                    cols = [
+                        td.get_text(strip=True)
+                        for td in row.find_all(["td", "th"])
+                    ]
+                    if len(cols) >= 2:
+                        date_part, price_part = cols[0], cols[1]
+                        price_match = re.search(r"\$?(\d+\.\d{2})", price_part)
+                        if price_match:
+                            try:
+                                p_val = float(price_match.group(1))
+                                parsed_data.append(
+                                    {"Date": date_part, "Price": p_val}
+                                )
+                            except ValueError:
+                                pass
+
+            if parsed_data:
                 return parsed_data[-10:]
-
-            # 2. Extract price banner for the most recent day (e.g. 30-Sep: $4.56)
-            text = soup.get_text()
-            today_match = re.search(
-                r"Price\s+for\s+(\d{1,2}-[A-Za-z]{3}(?:-\d{2,4})?):\s*\$?(\d+\.\d{2})",
-                text,
-                re.IGNORECASE,
-            )
-
-            # Reconcile fallback data dictionary with latest single banner price
-            merged_dict = {item["Date"]: item["Price"] for item in fallback_data}
-            if today_match:
-                t_date_str, t_price_str = today_match.groups()
-                d_parts = t_date_str.split("-")
-                formatted_t_date = f"{d_parts[0]}-{d_parts[1]}"
-                merged_dict[formatted_t_date] = float(t_price_str)
-
-            merged_list = [
-                {"Date": k, "Price": v} for k, v in merged_dict.items()
-            ]
-            return merged_list[-10:]
 
     except Exception:
         pass
 
-    return fallback_data
+    return []
 
 
 def parse_fbo_fuel_table(fuel_table):
@@ -484,3 +494,5 @@ if latest_index_data:
     )
 
     st.altair_chart(chart, use_container_width=True)
+else:
+    st.info("⚠️ Live Jet Fuel Index data is currently unavailable.")
