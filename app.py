@@ -281,10 +281,12 @@ def scrape_argus_index():
 
         if categories and prices:
             df = pd.DataFrame({"DateStr": categories, "Price": prices})
-            df["Date"] = pd.to_datetime(
+            df["ParsedDate"] = pd.to_datetime(
                 df["DateStr"] + "-2026", format="%d-%b-%Y", errors="coerce"
             )
-            return df[["Date", "Price"]].dropna()
+            df = df.sort_values("ParsedDate").reset_index(drop=True)
+            df["FormattedDate"] = df["ParsedDate"].dt.strftime("%m/%d/%y")
+            return df[["ParsedDate", "FormattedDate", "Price"]].dropna()
     except Exception as e:
         st.error(f"Error scraping Argus index: {e}")
     return None
@@ -368,13 +370,10 @@ if argus_df is not None and not argus_df.empty:
         .mark_line(point=True)
         .encode(
             x=alt.X(
-                "Date:T",
+                "FormattedDate:O",
                 title="Date",
-                axis=alt.Axis(
-                    format="%m/%d/%y",
-                    labelAngle=-45,
-                    values=argus_df["Date"].tolist(),
-                ),
+                sort=None,
+                axis=alt.Axis(labelAngle=-45, labelOverlap=False),
             ),
             y=alt.Y(
                 "Price:Q",
@@ -382,11 +381,11 @@ if argus_df is not None and not argus_df.empty:
                 scale=alt.Scale(domain=[1.0, 5.0]),
             ),
             tooltip=[
-                alt.Tooltip("Date:T", title="Date", format="%m/%d/%y"),
+                alt.Tooltip("FormattedDate:O", title="Date"),
                 "Price",
             ],
         )
-        .properties(width="container", height=380)
+        .properties(width="container", height=450)
     )
 
     st.altair_chart(argus_chart, use_container_width=True)
