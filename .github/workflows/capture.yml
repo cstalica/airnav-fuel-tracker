@@ -8,6 +8,11 @@ on:
 jobs:
   run-scraper:
     runs-on: ubuntu-latest
+    
+    # Add permissions block so GITHUB_TOKEN can push commits back to the repo
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
