@@ -8,11 +8,11 @@ import requests
 import streamlit as st
 from bs4 import BeautifulSoup
 
-# Centered Layout Page Config
+# Wide Layout Page Config to Expand Graph Across the Screen
 st.set_page_config(
     page_title="Jet A Fuel Tracker",
     page_icon="✈️",
-    layout="centered",
+    layout="wide",
     initial_sidebar_state="collapsed",
 )
 
