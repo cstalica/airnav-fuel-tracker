@@ -8,14 +8,14 @@ on:
 jobs:
   run-scraper:
     runs-on: ubuntu-latest
-    
-    # Add permissions block so GITHUB_TOKEN can push commits back to the repo
     permissions:
       contents: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: main  # Explicitly checkout the main branch
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -37,4 +37,4 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add ulsd_history.csv
-          git diff --staged --quiet || (git commit -m "Test auto-update NY Harbor ULSD price" && git push)
+          git diff --staged --quiet || (git commit -m "Auto-update NY Harbor ULSD price" && git push origin main)
