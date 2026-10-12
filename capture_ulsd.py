@@ -11,15 +11,11 @@ def capture_price():
         page.goto(url, timeout=60000)
         
         try:
-            # Wait for the LAST price span/value to render
             page.wait_for_selector("text=LAST", timeout=15000)
-            
-            # Extract the live price text adjacent to the Last label
             price_elem = page.locator("xpath=//*[contains(text(), 'LAST')]/following-sibling::*[1]").first
             price_text = price_elem.inner_text().strip()
             
             clean_price = float(price_text.replace("$", "").replace(",", ""))
-            # Use current exact timestamp for test logging intervals
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
             with open("ulsd_history.csv", mode="a", newline="") as f:
