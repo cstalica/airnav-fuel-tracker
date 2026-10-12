@@ -292,16 +292,15 @@ def scrape_argus_index():
     return None
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=60)
 def load_ulsd_history():
-    """Loads historical NY Harbor ULSD data logged at 5:00 PM daily."""
+    """Loads historical NY Harbor ULSD data logged by the automation script."""
     try:
         df = pd.read_csv("ulsd_history.csv")
         df["ParsedDateTime"] = pd.to_datetime(df["Timestamp"])
         df["FormattedDate"] = df["ParsedDateTime"].dt.strftime("%m/%d/%y %H:%M")
         return df.sort_values("ParsedDateTime").reset_index(drop=True)
     except FileNotFoundError:
-        # Return an empty dummy dataframe structure if file doesn't exist yet
         return pd.DataFrame(columns=["Timestamp", "Price"])
 
 
@@ -414,10 +413,10 @@ if argus_df is not None and not argus_df.empty:
 else:
     st.warning("Unable to fetch live Argus US Jet Fuel Index data at the moment.")
 
-# NY Harbor ULSD Daily 5:00 PM Tracker Section
+# NY Harbor ULSD Daily Capture Section
 st.divider()
-st.subheader("📈 NY Harbor ULSD Futures (Daily 5:00 PM Capture)")
-st.write("Tracking the settlement/closing price trends captured daily at 5:00 PM.")
+st.subheader("📈 NY Harbor ULSD Futures (Daily Capture)")
+st.write("Tracking closing price trends captured by automated scheduled runs.")
 
 ulsd_df = load_ulsd_history()
 
@@ -428,7 +427,7 @@ if not ulsd_df.empty:
         .encode(
             x=alt.X(
                 "FormattedDate:O",
-                title="Capture Time",
+                title="Capture Timestamp",
                 sort=None,
                 axis=alt.Axis(labelAngle=-45, labelOverlap=False),
             ),
@@ -447,4 +446,4 @@ if not ulsd_df.empty:
     )
     st.altair_chart(ulsd_chart, use_container_width=True)
 else:
-    st.info("No historical 5:00 PM data logged yet for NY Harbor ULSD. Set up the background cron job to populate data.")
+    st.info("No historical data logged yet for NY Harbor ULSD. Trigger your GitHub Action workflow to start populating data points.")
