@@ -1,47 +1,33 @@
 import csv
-import re
 from datetime import datetime
-from playwright.sync_api import sync_playwright
+import yfinance as yf
 
 def capture_price():
-    # The actual CME Group NY Harbor ULSD URL
-    url = "https://www.cmegroup.com/markets/energy/refined-products/heating-oil.html"
-    
-    print(f"Connecting to {url}...")
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.set_extra_http_headers({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        })
+    try:
+        print("Fetching NY Harbor ULSD price from Yahoo Finance (HO=F)...")
         
-        try:
-            # Navigate to the real CME page and wait for network activity to settle
-            page.goto(url, timeout=60000, wait_until="networkidle")
+        # Pull NY Harbor ULSD Futures ticker data
+        ticker = yf.Ticker("HO=F")
+        todays_data = ticker.history(period="1d")
+        
+        if not todays_data.empty:
+            # Extract the latest closing/current price
+            clean_price = float(todays_data['Close'].iloc[-1])
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
-            html_content = page.content()
-            
-            # Regex targeting the "LAST" label and capturing the immediately following price (e.g., 4.6944)
-            match = re.search(r"LAST.*?([0-9]+\.[0-9]{2,4})", html_content, re.DOTALL | re.IGNORECASE)
-            
-            if match:
-                clean_price = float(match.group(1))
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # Append to your local CSV history file
+            with open("ulsd_history.csv", mode="a", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow([timestamp, clean_price])
                 
-                with open("ulsd_history.csv", mode="a", newline="") as f:
-                    writer = csv.writer(f)
-                    writer.writerow([timestamp, clean_price])
-                    
-                print(f"SUCCESS: Captured price ${clean_price} at {timestamp}")
-            else:
-                print("ERROR: Price pattern not found in page content.")
-                raise ValueError("Could not extract price via regex.")
-                
-        except Exception as e:
-            print(f"Scraper failed: {e}")
-            raise e
-        finally:
-            browser.close()
+            print(f"SUCCESS: Captured NY Harbor ULSD price ${clean_price:.4f} at {timestamp}")
+        else:
+            print("ERROR: No data returned from Yahoo Finance.")
+            raise ValueError("Empty data returned.")
+            
+    except Exception as e:
+        print(f"Scraper failed: {e}")
+        raise e
 
 if __name__ == "__main__":
     capture_price()
