@@ -249,7 +249,7 @@ def scrape_airport_jeta(icao):
 
 @st.cache_data(ttl=3600)
 def scrape_argus_index():
-    url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/"
+    url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/#jet-fuel-prices"
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -370,7 +370,7 @@ if argus_df is not None and not argus_df.empty:
             x=alt.X(
                 "Date:T",
                 title="Date",
-                axis=alt.Axis(format="%a %d-%b", labelAngle=-35),
+                axis=alt.Axis(format="%m/%d/%y", labelAngle=-35),
             ),
             y=alt.Y(
                 "Price:Q",
@@ -378,7 +378,7 @@ if argus_df is not None and not argus_df.empty:
                 scale=alt.Scale(domain=[1.0, 5.0]),
             ),
             tooltip=[
-                alt.Tooltip("Date:T", title="Date", format="%a, %d-%b"),
+                alt.Tooltip("Date:T", title="Date", format="%m/%d/%y"),
                 "Price",
             ],
         )
