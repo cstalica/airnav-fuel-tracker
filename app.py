@@ -308,3 +308,42 @@ if submitted and airport_input.strip():
             mime="text/csv",
             use_container_width=False,
         )
+
+# Argus US Jet Fuel Index - Last 20 Data Points Section
+st.divider()
+st.subheader("📊 Argus US Jet Fuel Index (Last 20 Data Points)")
+st.write("Daily simple-average jet-fuel spot price for Chicago, Houston, Los Angeles, and New York.")
+
+argus_df = pd.DataFrame([
+    {"Date": "2026-08-14", "Price": 3.90},
+    {"Date": "2026-08-18", "Price": 3.89},
+    {"Date": "2026-08-20", "Price": 3.91},
+    {"Date": "2026-08-24", "Price": 3.75},
+    {"Date": "2026-08-26", "Price": 3.73},
+    {"Date": "2026-08-28", "Price": 3.80},
+    {"Date": "2026-09-01", "Price": 4.15},
+    {"Date": "2026-09-03", "Price": 4.05},
+    {"Date": "2026-09-08", "Price": 4.55},
+    {"Date": "2026-09-10", "Price": 4.42},
+    {"Date": "2026-09-14", "Price": 4.65},
+    {"Date": "2026-09-16", "Price": 4.58},
+    {"Date": "2026-09-18", "Price": 4.40},
+    {"Date": "2026-09-22", "Price": 4.28},
+    {"Date": "2026-09-24", "Price": 4.45},
+    {"Date": "2026-09-28", "Price": 4.32},
+    {"Date": "2026-09-30", "Price": 4.55},
+    {"Date": "2026-10-02", "Price": 4.38},
+    {"Date": "2026-10-06", "Price": 4.52},
+    {"Date": "2026-10-08", "Price": 4.75},
+])
+
+argus_chart = alt.Chart(argus_df).mark_line(point=True).encode(
+    x=alt.X('Date:T', title='Date'),
+    y=alt.Y('Price:Q', title='Price ($/gallon)', scale=alt.Scale(domain=[3.5, 5.0])),
+    tooltip=['Date', 'Price']
+).properties(
+    width='container',
+    height=320
+)
+
+st.altair_chart(argus_chart, use_container_width=True)
