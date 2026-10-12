@@ -1,0 +1,36 @@
+name: Capture Daily NY Harbor ULSD Price
+
+on:
+  schedule:
+    # Runs everyday at 5:00 PM UTC (Adjust hour for your preferred timezone, e.g., 21:00 for 5 PM EST)
+    - cron: '0 21 * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  run-scraper:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install playwright pandas
+          playwright install chromium
+
+      - name: Run capture script
+        run: python capture_ulsd.py
+
+      - name: Commit and push changes back to repo
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add ulsd_history.csv
+          git diff --staged --quiet || (git commit -m "Auto-update NY Harbor ULSD price at 5 PM" && git push)
