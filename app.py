@@ -292,6 +292,19 @@ def scrape_argus_index():
     return None
 
 
+@st.cache_data(ttl=3600)
+def load_ulsd_history():
+    """Loads historical NY Harbor ULSD data logged at 5:00 PM daily."""
+    try:
+        df = pd.read_csv("ulsd_history.csv")
+        df["ParsedDateTime"] = pd.to_datetime(df["Timestamp"])
+        df["FormattedDate"] = df["ParsedDateTime"].dt.strftime("%m/%d/%y %H:%M")
+        return df.sort_values("ParsedDateTime").reset_index(drop=True)
+    except FileNotFoundError:
+        # Return an empty dummy dataframe structure if file doesn't exist yet
+        return pd.DataFrame(columns=["Timestamp", "Price"])
+
+
 # Main UI Layout
 st.title("✈️ Jet A Fuel Tracker")
 
@@ -400,3 +413,38 @@ if argus_df is not None and not argus_df.empty:
     st.altair_chart(argus_chart, use_container_width=True)
 else:
     st.warning("Unable to fetch live Argus US Jet Fuel Index data at the moment.")
+
+# NY Harbor ULSD Daily 5:00 PM Tracker Section
+st.divider()
+st.subheader("📈 NY Harbor ULSD Futures (Daily 5:00 PM Capture)")
+st.write("Tracking the settlement/closing price trends captured daily at 5:00 PM.")
+
+ulsd_df = load_ulsd_history()
+
+if not ulsd_df.empty:
+    ulsd_chart = (
+        alt.Chart(ulsd_df)
+        .mark_line(point=True, color="orange")
+        .encode(
+            x=alt.X(
+                "FormattedDate:O",
+                title="Capture Time",
+                sort=None,
+                axis=alt.Axis(labelAngle=-45, labelOverlap=False),
+            ),
+            y=alt.Y(
+                "Price:Q",
+                title="ULSD Price ($)",
+                scale=alt.Scale(zero=False),
+                axis=alt.Axis(format="$.4f"),
+            ),
+            tooltip=[
+                alt.Tooltip("FormattedDate:O", title="Timestamp"),
+                alt.Tooltip("Price:Q", format="$.4f", title="Price"),
+            ],
+        )
+        .properties(width="container", height=400)
+    )
+    st.altair_chart(ulsd_chart, use_container_width=True)
+else:
+    st.info("No historical 5:00 PM data logged yet for NY Harbor ULSD. Set up the background cron job to populate data.")
