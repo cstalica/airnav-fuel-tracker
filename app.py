@@ -370,7 +370,11 @@ if argus_df is not None and not argus_df.empty:
             x=alt.X(
                 "Date:T",
                 title="Date",
-                axis=alt.Axis(format="%m/%d/%y", labelAngle=-35),
+                axis=alt.Axis(
+                    format="%m/%d/%y",
+                    labelAngle=-45,
+                    values=argus_df["Date"].tolist(),
+                ),
             ),
             y=alt.Y(
                 "Price:Q",
@@ -382,7 +386,7 @@ if argus_df is not None and not argus_df.empty:
                 "Price",
             ],
         )
-        .properties(width="container", height=340)
+        .properties(width="container", height=380)
     )
 
     st.altair_chart(argus_chart, use_container_width=True)
