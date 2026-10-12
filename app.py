@@ -341,9 +341,9 @@ argus_df = pd.DataFrame([
 argus_df['Date'] = pd.to_datetime(argus_df['Date'])
 
 argus_chart = alt.Chart(argus_df).mark_line(point=True).encode(
-    x=alt.X('Date:T', title='Date', axis=alt.Axis(format='%d-%b')),
+    x=alt.X('Date:T', title='Date', axis=alt.Axis(format='%a %d-%b', labelAngle=-30)),
     y=alt.Y('Price:Q', title='Price ($/gallon)', scale=alt.Scale(domain=[3.5, 5.0])),
-    tooltip=[alt.Tooltip('Date:T', title='Date', format='%d-%b'), 'Price']
+    tooltip=[alt.Tooltip('Date:T', title='Date', format='%a, %d-%b'), 'Price']
 ).properties(
     width='container',
     height=320
