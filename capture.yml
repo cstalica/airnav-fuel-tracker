@@ -1,10 +1,10 @@
-name: Capture Daily NY Harbor ULSD Price
+name: Capture NY Harbor ULSD Price (Test Every 10 Mins)
 
 on:
   schedule:
-    # Runs everyday at 5:00 PM UTC (Adjust hour for your preferred timezone, e.g., 21:00 for 5 PM EST)
-    - cron: '0 21 * * *'
-  workflow_dispatch: # Allows manual trigger from GitHub UI
+    # Runs every 10 minutes for testing purposes
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # Allows manual testing trigger from GitHub Actions UI
 
 jobs:
   run-scraper:
@@ -33,4 +33,4 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add ulsd_history.csv
-          git diff --staged --quiet || (git commit -m "Auto-update NY Harbor ULSD price at 5 PM" && git push)
+          git diff --staged --quiet || (git commit -m "Test auto-update NY Harbor ULSD price" && git push)
