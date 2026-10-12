@@ -1,6 +1,8 @@
+import ast
 import json
 import re
 from datetime import datetime
+import altair as alt
 import pandas as pd
 import requests
 import streamlit as st
@@ -245,6 +247,49 @@ def scrape_airport_jeta(icao):
     return fbo_results
 
 
+@st.cache_data(ttl=3600)
+def scrape_argus_index():
+    url = "https://www.airlines.org/dataset/argus-us-jet-fuel-index/"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code != 200:
+            return None
+
+        soup = BeautifulSoup(res.content, "html.parser")
+        categories, prices = [], []
+
+        for script in soup.find_all("script"):
+            if script.string and "build_argus_daily_chart" in script.string:
+                cat_match = re.search(
+                    r"var\s+the_categories\s*=\s*(\[.*?\]);", script.string
+                )
+                data_match = re.search(
+                    r"var\s+the_data\s*=\s*(\[.*?\]);", script.string
+                )
+
+                if cat_match and data_match:
+                    categories = ast.literal_eval(cat_match.group(1))
+                    prices = ast.literal_eval(data_match.group(1))
+                    break
+
+        if categories and prices:
+            df = pd.DataFrame({"DateStr": categories, "Price": prices})
+            df["Date"] = pd.to_datetime(
+                df["DateStr"] + "-2026", format="%d-%b-%Y", errors="coerce"
+            )
+            return df[["Date", "Price"]].dropna()
+    except Exception as e:
+        st.error(f"Error scraping Argus index: {e}")
+    return None
+
+
 # Main UI Layout
 st.title("✈️ Jet A Fuel Tracker")
 
@@ -307,3 +352,39 @@ if submitted and airport_input.strip():
             mime="text/csv",
             use_container_width=False,
         )
+
+# Argus US Jet Fuel Index - Dynamic Scraping Section
+st.divider()
+st.subheader("📊 Argus US Jet Fuel Index™")
+st.write(
+    "Daily simple-average jet-fuel spot price for Chicago, Houston, Los Angeles, and New York."
+)
+
+argus_df = scrape_argus_index()
+
+if argus_df is not None and not argus_df.empty:
+    argus_chart = (
+        alt.Chart(argus_df)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X(
+                "Date:T",
+                title="Date",
+                axis=alt.Axis(format="%a %d-%b", labelAngle=-35),
+            ),
+            y=alt.Y(
+                "Price:Q",
+                title="Price ($/gallon)",
+                scale=alt.Scale(domain=[1.0, 5.0]),
+            ),
+            tooltip=[
+                alt.Tooltip("Date:T", title="Date", format="%a, %d-%b"),
+                "Price",
+            ],
+        )
+        .properties(width="container", height=340)
+    )
+
+    st.altair_chart(argus_chart, use_container_width=True)
+else:
+    st.warning("Unable to fetch live Argus US Jet Fuel Index data at the moment.")
