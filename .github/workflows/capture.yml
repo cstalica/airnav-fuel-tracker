@@ -1,39 +1,33 @@
-name: Capture NY Harbor ULSD Price
+name: Capture Market Data
 
 on:
   schedule:
--   cron: '0 22 * * 1-5'
-  workflow_dispatch:
+    - cron: '0 21 * * 1-5' # Runs Monday-Friday at 5:00 PM EST (21:00 UTC)
+  workflow_dispatch:        # Enables the "Run workflow" button in GitHub Actions
 
 jobs:
-  run-scraper:
+  capture-data:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
-          pip install yfinance pandas
+          pip install requests pandas matplotlib
 
       - name: Run capture script
-        run: python capture_ulsd.py
+        run: python capture.py
 
-      - name: Commit and push changes back to repo
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit and push updated graph/data
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add ulsd_history.csv
-          git diff --staged --quiet || (git commit -m "Auto-update NY Harbor ULSD price via Yahoo Finance" && git push origin main)
+          git add .
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update market data and graph [skip ci]" && git push)
