@@ -2,7 +2,7 @@ name: Capture NY Harbor ULSD Price
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '*/60 * * * *'
   workflow_dispatch:
 
 jobs:
