@@ -2,9 +2,8 @@ name: Capture NY Harbor ULSD Price (Test Every 10 Mins)
 
 on:
   schedule:
-    # Runs every 10 minutes for testing purposes
     - cron: '*/10 * * * *'
-  workflow_dispatch: # Allows manual testing trigger from GitHub Actions UI
+  workflow_dispatch:
 
 jobs:
   run-scraper:
