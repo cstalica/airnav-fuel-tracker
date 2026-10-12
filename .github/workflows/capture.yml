@@ -3,7 +3,10 @@ name: Capture Market Data
 on:
   schedule:
     - cron: '0 21 * * 1-5' # Runs Monday-Friday at 5:00 PM EST (21:00 UTC)
-  workflow_dispatch:        # Enables the "Run workflow" button in GitHub Actions
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   capture-data:
@@ -30,4 +33,9 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add .
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update market data and graph [skip ci]" && git push)
+          if git diff-index --quiet HEAD; then
+            echo "No changes to commit."
+          else
+            git commit -m "Auto-update market data and graph [skip ci]"
+            git push
+          fi
